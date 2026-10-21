@@ -1,0 +1,71 @@
+
+
+1. Run the SQL file in the Supabase SQL Editor (sets up the database; already done, only ever once)
+
+Go to supabase.com and open your catalog project.
+Click SQL Editor in the left sidebar, then New query.
+On your computer, open Desktop\catalog\supabase\migrations\0001_init.sql in Notepad. Press Ctrl+A, then Ctrl+C.
+Click into the empty editor in Supabase and press Ctrl+V.
+Click Run. You should see “Success”.
+Never run it a second time; it will error because the tables already exist.
+
+2. Turn off sign-ups (so nobody else can make an account)
+
+In Supabase, click Authentication in the left sidebar.
+Click Sign In / Providers.
+Turn Allow new users to sign up to off and click Save.
+
+3. Check the Vercel environment variables (the app’s connection to the database)
+
+At vercel.com, open the catalog project and click Environment Variables in the left menu.
+Type SUPABASE in the search box. Confirm these exist:
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SECRET_KEY
+Search STORE and confirm STORE_TIMEZONE exists. If it’s missing, click Add Environment Variable, type the name, enter America/New_York and click Save.
+
+4. Deploy
+
+In Vercel, click Deployments. If there’s already one with a green Ready label, this step is done.
+If not, open the Command Prompt, go to the folder and deploy:
+  cd Desktop\catalog
+  npx vercel --prod
+Wait for it to print a URL.
+
+5. Create your admin login (already done)
+
+In Command Prompt, inside Desktop\catalog, run:
+  npm run create-admin -- admin@catalog.com "YourPassword"
+It should say “can now sign in at /admin”.
+
+6. Fill in Settings and add products
+
+Open your live link with /admin at the end, e.g. https://catalog-xyz.vercel.app/admin, and sign in.
+Click Settings:
+fill in business name, address and logo
+WhatsApp number with country code
+currency, tax and pickup instructions
+Then click Save settings.
+Click Products → Add product. Enter name, price and a photo, keep Published checked, and click Add product. Repeat for each product.
+
+7. Test order on the live site
+
+Open the live link without /admin, ideally on your phone.
+Add a product, open the cart and click Checkout.
+Type a test business name and click Place Order.
+On the confirmation page, click Download Invoice and open the PDF to check it.
+Back in /admin → Orders, the order should be listed.
+
+8. Delete the test orders
+
+In Supabase, open SQL Editor → New query, paste the three lines from my previous message and click Run.
+Click Storage → invoices, tick the month folder (e.g. 2026-10) and click Delete.
+
+9. Your own domain (optional)
+
+In Vercel, go to Settings → Domains → Add Domain. Type a name ending in .vercel.app, or a domain you own, and follow the DNS instructions it shows.
+
+10. Share the link
+
+Send customers the main link (without /admin) by WhatsApp, text or a QR code.
+Keep /admin to yourself.
