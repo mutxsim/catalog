@@ -14,7 +14,7 @@ No branding is built in: business name, logo, address, currency, tax and invoice
 At [supabase.com](https://supabase.com) create a project (the free tier is fine).
 
 ### 2. Create the database
-In the Supabase dashboard open **SQL Editor**, paste the whole of `supabase/migrations/0001_init.sql`, and run it. This creates the tables, pricing/order functions, row-level security and the three storage buckets (`product-images`, `branding` public; `invoices` private).
+In the Supabase dashboard open **SQL Editor**, paste the whole of `supabase/migrations/0001_init.sql`, and run it. Then do the same with `supabase/migrations/0002_flavors.sql` (adds flavors; safe to run on a database that already has products and orders). This creates the tables, pricing/order functions, row-level security and the three storage buckets (`product-images`, `branding` public; `invoices` private).
 
 Then in **Authentication → Sign In / Providers**, turn **off** "Allow new users to sign up". Only the admin account you create below should exist.
 
@@ -87,8 +87,13 @@ Admin → Settings shows which parts are configured.
 
 ---
 
+## Flavors / varieties
+To sell one product in several flavors, add each flavor as its own product (own price, SKU and photo) and give them the same **Product group**, with the flavor in **Flavor / variety** (Admin → Products → Add product). For example: group `Gummies 10ct`, flavors `Mango`, `Watermelon`, `Blue Razz`.
+
+The catalog then shows one card for the group with flavor chips (and a flavor dropdown when there are more than six). The selected flavor sets the photo, SKU, price and what goes in the cart. The cart, invoice and WhatsApp message name the flavor, e.g. "Gummies 10ct — Mango". Searching for a flavor shows its group with that flavor selected. Products without a group show as before.
+
 ## Product CSV
-Admin → Products → *Import / export CSV*. Columns: `name, price, sku, category, description, published, sort_order` (only `name` and `price` are required). Rows whose SKU matches an existing product update it; others are added. Images are set per product.
+Admin → Products → *Import / export CSV*. Columns: `name, price, sku, category, group, flavor, description, published, sort_order` (only `name` and `price` are required). Rows whose SKU matches an existing product update it; others are added. Images are set per product.
 
 ## Testing
 ```bash

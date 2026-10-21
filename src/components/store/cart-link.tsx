@@ -16,7 +16,7 @@ export function CartLink() {
         <path d="M9 7V6a3 3 0 0 1 6 0v1" />
       </svg>
       {count > 0 && (
-        <span className="tabular absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[11px] font-semibold text-white">
+        <span className="tabular absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-cta px-1 text-[11px] font-semibold text-on-cta">
           {count > 999 ? "999+" : count}
         </span>
       )}

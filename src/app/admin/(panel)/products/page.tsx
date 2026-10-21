@@ -21,13 +21,13 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
 
   let query = supabase
     .from("products")
-    .select("id, name, price_cents, sku, category, image_path, published, sort_order")
+    .select("id, name, price_cents, sku, category, group_name, variant_name, image_path, published, sort_order")
     .order("sort_order")
     .order("name")
     .order("id");
   if (q) {
     const term = q.replace(/[%_,()]/g, " ");
-    query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%`);
+    query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%,group_name.ilike.%${term}%,variant_name.ilike.%${term}%`);
   }
   const { data, error } = await query;
   const products = (data ?? []) as Product[];
@@ -88,7 +88,14 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
                       <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-subtle">
                         {img && <Image src={img} alt="" fill sizes="40px" className="object-cover" />}
                       </div>
-                      <span className="font-medium">{p.name}</span>
+                      <span>
+                        <span className="font-medium">{p.name}</span>
+                        {(p.variant_name || p.group_name) && (
+                          <span className="block text-xs text-muted">
+                            {[p.group_name, p.variant_name].filter(Boolean).join(" · ")}
+                          </span>
+                        )}
+                      </span>
                     </div>
                   </td>
                   <td className="px-2 py-2 text-muted">{p.sku ?? "—"}</td>
@@ -127,7 +134,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Import / export CSV</summary>
         <div className="border-t border-line px-4 py-4 text-sm">
           <p className="text-muted">
-            Columns: <code className="font-mono text-xs">name, price, sku, category, description, published, sort_order</code>. Rows with a
+            Columns: <code className="font-mono text-xs">name, price, sku, category, group, flavor, description, published, sort_order</code>. Rows with a
             SKU that already exists update that product; other rows are added. Images are managed per product.
           </p>
           <div className="mt-4 flex flex-wrap items-start gap-3">

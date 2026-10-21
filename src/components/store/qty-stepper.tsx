@@ -31,7 +31,7 @@ export function QtyStepper({
   };
 
   return (
-    <div className={`flex ${h} items-center rounded-lg border border-line bg-card`}>
+    <div className={`flex ${h} items-center rounded-xl border border-line bg-card`}>
       <button type="button" aria-label={`Decrease ${label}`} disabled={value <= 1} onClick={() => onChange(value - 1)} className={`${w} h-full text-lg text-muted hover:text-ink disabled:opacity-30`}>
         −
       </button>

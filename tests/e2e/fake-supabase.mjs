@@ -7,7 +7,7 @@
  */
 import http from "node:http";
 import { createHmac, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
@@ -26,7 +26,8 @@ await db.exec(`
   create function auth.role() returns text language sql stable as $$ select nullif(current_setting('request.jwt.role', true), '') $$;
   create table storage.buckets (id text primary key, name text, public boolean, file_size_limit bigint, allowed_mime_types text[]);
 `);
-await db.exec(readFileSync(join(here, "..", "..", "supabase", "migrations", "0001_init.sql"), "utf8"));
+const migrations = join(here, "..", "..", "supabase", "migrations");
+for (const f of readdirSync(migrations).filter((f) => f.endsWith(".sql")).sort()) await db.exec(readFileSync(join(migrations, f), "utf8"));
 await db.query("insert into auth.users (id, email) values ($1, $2)", [ADMIN.id, ADMIN.email]);
 await db.query("insert into public.admins (user_id) values ($1)", [ADMIN.id]);
 
@@ -67,11 +68,12 @@ const user = () => ({ id: ADMIN.id, aud: "authenticated", role: "authenticated",
 // ---------------------------------------------------------------- PostgREST subset
 function splitTop(s) {
   const out = [];
-  let depth = 0, cur = "";
+  let depth = 0, cur = "", quoted = false;
   for (const ch of s) {
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
-    if (ch === "," && depth === 0) { out.push(cur); cur = ""; } else cur += ch;
+    if (ch === '"') quoted = !quoted;
+    if (!quoted && ch === "(") depth++;
+    if (!quoted && ch === ")") depth--;
+    if (ch === "," && depth === 0 && !quoted) { out.push(cur); cur = ""; } else cur += ch;
   }
   if (cur) out.push(cur);
   return out;

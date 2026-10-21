@@ -1,7 +1,7 @@
 /** Shared class names keep buttons and inputs consistent everywhere. */
 export const btn = {
   primary:
-    "inline-flex items-center justify-center gap-2 rounded-lg bg-ink px-4 h-11 text-sm font-medium text-white transition-colors hover:bg-black disabled:cursor-not-allowed disabled:opacity-40",
+    "inline-flex items-center justify-center gap-2 rounded-lg bg-cta px-4 h-11 text-sm font-medium text-on-cta transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40",
   secondary:
     "inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-card px-4 h-11 text-sm font-medium text-ink transition-colors hover:border-ink/40 disabled:cursor-not-allowed disabled:opacity-40",
   accent:

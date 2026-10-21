@@ -10,14 +10,14 @@ export async function GET() {
 
   const { data, error } = await admin.supabase
     .from("products")
-    .select("name, price_cents, sku, category, description, published, sort_order")
+    .select("name, price_cents, sku, category, group_name, variant_name, description, published, sort_order")
     .order("sort_order")
     .order("name");
   if (error) return new Response("Could not export products", { status: 500 });
 
   const csv = toCsv(
     [...PRODUCT_CSV_HEADER],
-    (data ?? []).map((p) => [p.name, centsToInput(p.price_cents), p.sku, p.category, p.description, p.published, p.sort_order]),
+    (data ?? []).map((p) => [p.name, centsToInput(p.price_cents), p.sku, p.category, p.group_name, p.variant_name, p.description, p.published, p.sort_order]),
   );
   const date = new Date().toISOString().slice(0, 10);
   return new Response(csv, {

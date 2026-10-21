@@ -22,6 +22,10 @@ export type Product = {
   category: string | null;
   image_path: string | null;
   published: boolean;
+  /** Products sharing a group are shown as one card with flavor options. */
+  group_name: string | null;
+  /** Flavor / variety label within the group, e.g. "Mango". */
+  variant_name: string | null;
   sort_order: number;
 };
 

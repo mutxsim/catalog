@@ -105,6 +105,20 @@ async function seed() {
     order += 10;
   }
   await sql("insert into public.products (name, price_cents, published, sort_order) values ('Hidden Draft Product', 100, false, 999)");
+
+  // One product sold in seven flavors (7 > 6, so the flavor dropdown also shows).
+  const flavors = [["Berry", 0], ["Lemon Lime", 60], ["Grape", 280], ["Orange", 30], ["Mango", 45], ["Peach", 20], ["Watermelon", 350]];
+  let i = 0;
+  for (const [flavor, hue] of flavors) {
+    const [{ id }] = await sql(
+      "insert into public.products (name, price_cents, sku, category, published, sort_order, group_name, variant_name, description) values ($1, $2, $3, 'Beverages', true, $4, 'Energy Shot 2 oz, 12 ct', $5, $6) returning id",
+      ["Energy Shot 2 oz, 12 ct", flavor === "Grape" ? 2650 : 2400, `ES-${flavor.slice(0, 3).toUpperCase()}`, 15 + i, flavor, "Twelve 2 oz shots per case."],
+    );
+    const path = `products/${id}/seed.png`;
+    await fetch(`${SB}/__test/upload?key=${encodeURIComponent(`product-images/${path}`)}`, { method: "POST", headers: { "content-type": "image/png" }, body: await productImage(hue, "bottle") });
+    await sql("update public.products set image_path = $1 where id = $2", [path, id]);
+    i++;
+  }
 }
 
 async function main() {
@@ -132,11 +146,11 @@ async function main() {
   await page.screenshot({ path: join(shots, "01-catalog-mobile.png"), fullPage: true });
   step("catalog lists only published products");
 
-  await page.getByRole("link", { name: "Snacks" }).click();
+  await page.getByRole("combobox", { name: "Categories" }).selectOption("Snacks");
   await page.waitForURL(/c=Snacks/);
   await page.getByRole("heading", { name: /Kettle Chips/ }).waitFor();
   assert.equal(await page.getByRole("heading", { name: /Spring Water/ }).count(), 0);
-  await page.getByRole("link", { name: "All" }).click();
+  await page.getByRole("combobox", { name: "Categories" }).selectOption("");
   await page.waitForURL((u) => !u.search);
   await page.getByRole("searchbox", { name: "Search products" }).fill("cola");
   await page.waitForURL(/q=cola/);
@@ -336,6 +350,44 @@ async function main() {
   await desk.screenshot({ path: join(shots, "11-catalog-desktop.png"), fullPage: true });
   await desk.goto(`${APP}/p/${created.id}`);
   await desk.screenshot({ path: join(shots, "12-product-desktop.png") });
+
+  // ---- Flavors (separate shopper so the main cart above is untouched)
+  const shopper = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  shopper.on("pageerror", (e) => failures.push(`flavor page error: ${e.message}`));
+  await shopper.goto(`${APP}/?q=lemon`);
+  const group = shopper.locator("article", { has: shopper.getByRole("heading", { name: "Energy Shot 2 oz, 12 ct" }) });
+  await group.getByRole("button", { name: /Lemon Lime/, pressed: true }).waitFor();
+  assert.equal(await group.count(), 1, "the matching flavor group shows as one card, not one per flavor");
+  await group.getByRole("button", { name: "Grape" }).click();
+  await group.getByText("SKU ES-GRA").waitFor();
+  await group.getByText("$26.50").first().waitFor();
+  await group.getByRole("combobox").selectOption({ label: "Peach" });
+  await group.getByRole("button", { name: /Peach/, pressed: true }).waitFor();
+  await group.getByText("SKU ES-PEA").waitFor();
+  await shopper.screenshot({ path: join(shots, "13-flavors-mobile.png"), fullPage: true });
+  await group.getByRole("button", { name: "Add to Cart" }).click();
+  await shopper.getByRole("link", { name: /Cart, 1 item/ }).waitFor();
+  await shopper.goto(`${APP}/checkout`);
+  await shopper.getByText("Energy Shot 2 oz, 12 ct — Peach").waitFor();
+  await shopper.getByLabel("Store / Business Name").fill("Flavor Test Shop");
+  await shopper.getByRole("button", { name: "Place Order" }).click();
+  await shopper.waitForURL(/\/order\//);
+  const [flavorLine] = await sql(
+    "select i.name, i.sku, i.unit_price_cents from public.order_items i join public.orders o on o.id = i.order_id where o.business_name = 'Flavor Test Shop'",
+  );
+  assert.deepEqual(flavorLine, { name: "Energy Shot 2 oz, 12 ct — Peach", sku: "ES-PEA", unit_price_cents: 2400 });
+  // Detail page: choosing a flavor updates the page and the shareable URL.
+  const [{ id: berryId }] = await sql("select id from public.products where sku = 'ES-BER'");
+  await shopper.goto(`${APP}/p/${berryId}`);
+  await shopper.getByRole("button", { name: "Watermelon" }).click();
+  await shopper.getByText("SKU ES-WAT").waitFor();
+  const [{ id: watId }] = await sql("select id from public.products where sku = 'ES-WAT'");
+  assert.ok(shopper.url().endsWith(`/p/${watId}`));
+  const deskFlavor = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await deskFlavor.goto(`${APP}/p/${berryId}`);
+  await deskFlavor.getByRole("button", { name: /Berry/, pressed: true }).waitFor();
+  await deskFlavor.screenshot({ path: join(shots, "14-flavor-detail-desktop.png") });
+  step("flavors: grouped card, chip + dropdown selection, search preselects, correct SKU/price, flavor named on the order");
 
   await browser.close();
   if (failures.length) throw new Error(`Browser errors:\n${failures.join("\n")}`);

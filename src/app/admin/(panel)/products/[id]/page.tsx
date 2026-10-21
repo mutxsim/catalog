@@ -7,7 +7,7 @@ import { getSettings } from "@/lib/settings";
 import type { Product } from "@/lib/types";
 import { btn } from "@/components/ui";
 import { deleteProduct } from "../actions";
-import { getCategories } from "../categories";
+import { getCategories, getGroups } from "../categories";
 import { ProductForm } from "../product-form";
 import { ConfirmButton } from "@/components/confirm-button";
 
@@ -20,7 +20,7 @@ export default async function EditProductPage({ params }: PageProps<"/admin/prod
   const { data } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   if (!data) notFound();
   const product = data as Product;
-  const [categories, settings] = await Promise.all([getCategories(), getSettings()]);
+  const [categories, groups, settings] = await Promise.all([getCategories(), getGroups(), getSettings()]);
 
   return (
     <div>
@@ -30,6 +30,7 @@ export default async function EditProductPage({ params }: PageProps<"/admin/prod
         product={product}
         imageUrl={publicStorageUrl("product-images", product.image_path)}
         categories={categories}
+        groups={groups}
         currency={settings.currency}
       />
       <form action={deleteProduct} className="mt-12 border-t border-line pt-6">

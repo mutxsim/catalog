@@ -23,6 +23,8 @@ export const productSchema = z.object({
     }),
   sku: optionalText(64).refine((v) => v === null || /^[\w.\-/ #]+$/.test(v), "SKU can use letters, numbers, spaces and . - / # _"),
   category: optionalText(80),
+  group_name: optionalText(200),
+  variant_name: optionalText(120),
   description: optionalText(5000),
   published: z.boolean(),
   sort_order: z.coerce.number().int().min(-1_000_000).max(1_000_000),

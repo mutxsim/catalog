@@ -1,9 +1,9 @@
 /**
- * Runs supabase/migrations/0001_init.sql against an in-process Postgres
+ * Runs every supabase/migrations/*.sql file against an in-process Postgres
  * (PGlite) with minimal stand-ins for Supabase's auth/storage schemas, then
  * exercises pricing, ordering, idempotency and immutability rules.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
@@ -49,7 +49,8 @@ async function place(name: string, items: unknown, expected: number, key = rando
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(SUPABASE_STUBS);
-  await db.exec(readFileSync(join(__dirname, "..", "supabase", "migrations", "0001_init.sql"), "utf8"));
+  const dir = join(__dirname, "..", "supabase", "migrations");
+  for (const f of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) await db.exec(readFileSync(join(dir, f), "utf8"));
 });
 
 describe("quote_items", () => {
@@ -158,5 +159,22 @@ describe("whatsapp claim", () => {
     const c2 = await db.query<{ ok: boolean }>("select public.claim_whatsapp_send($1) as ok", [o.order_id]);
     expect(c1.rows[0].ok).toBe(true);
     expect(c2.rows[0].ok).toBe(false);
+  });
+});
+
+describe("flavors (0002)", () => {
+  it("names order lines with the flavor and blocks duplicate flavors in a group", async () => {
+    const r = await db.query<{ id: string }>(
+      "insert into public.products (name, price_cents, published, group_name, variant_name) values ('Gummies 10ct', 500, true, 'Gummies 10ct', 'Mango'), ('Gummies 10ct Watermelon', 500, true, 'Gummies 10ct', 'Watermelon') returning id",
+    );
+    const q = await quote(r.rows.map((x) => ({ product_id: x.id, quantity: 1 })));
+    const names = (q.lines as unknown as { name: string }[]).map((l) => l.name);
+    expect(names).toEqual(["Gummies 10ct — Mango", "Gummies 10ct Watermelon"]);
+    await expect(
+      db.query("insert into public.products (name, price_cents, group_name, variant_name) values ('X', 1, 'gummies 10CT', 'mango')"),
+    ).rejects.toThrow(/products_group_variant_key|duplicate/);
+    const o = await place("Flavor Shop", [{ product_id: r.rows[0].id, quantity: 2 }], 1000);
+    const item = (await db.query<{ name: string }>("select name from public.order_items where order_id = $1", [o.order_id])).rows[0];
+    expect(item.name).toBe("Gummies 10ct — Mango");
   });
 });

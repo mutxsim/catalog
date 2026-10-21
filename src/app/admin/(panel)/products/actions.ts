@@ -17,6 +17,7 @@ function refresh() {
 }
 
 function dbError(message: string) {
+  if (/products_group_variant_key/.test(message)) return "This product group already has a flavor with that name.";
   if (/products_sku_key|duplicate key/.test(message)) return "Another product already uses this SKU.";
   return "Could not save the product. Please try again.";
 }
@@ -36,6 +37,8 @@ export async function saveProduct(_prev: FormState, formData: FormData): Promise
     price: String(formData.get("price") ?? ""),
     sku: String(formData.get("sku") ?? ""),
     category: String(formData.get("category") ?? ""),
+    group_name: String(formData.get("group_name") ?? ""),
+    variant_name: String(formData.get("variant_name") ?? ""),
     description: String(formData.get("description") ?? ""),
     published: formData.get("published") === "on",
     sort_order: String(formData.get("sort_order") ?? "") || String(id ? 0 : await nextSortOrder()),
@@ -159,6 +162,8 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
       price: get("price") ?? "",
       sku,
       category: get("category") ?? "",
+      group_name: get("group") ?? "",
+      variant_name: get("flavor") ?? "",
       description: get("description") ?? "",
       published: parseBool(get("published"), true),
       sort_order: sortRaw || String(existingId ? (existing!.find((p) => p.id === existingId)?.sort_order ?? 0) : nextOrder),

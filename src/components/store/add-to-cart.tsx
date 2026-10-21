@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { cart, type CartItem } from "@/lib/cart";
 import { QtyStepper } from "./qty-stepper";
 
-export function AddToCart({ item, compact }: { item: Omit<CartItem, "quantity">; compact?: boolean }) {
+export function AddToCart({ item }: { item: Omit<CartItem, "quantity"> }) {
   const [qty, setQty] = useState(1);
   const [added, setAdded] = useState(false);
 
@@ -15,9 +15,9 @@ export function AddToCart({ item, compact }: { item: Omit<CartItem, "quantity">;
   }, [added]);
 
   return (
-    <div className={compact ? "flex flex-col gap-2 sm:flex-row" : "flex gap-3"}>
-      <div className={compact ? "sm:w-[108px] sm:shrink-0" : "w-36 shrink-0"}>
-        <QtyStepper value={qty} onChange={setQty} label={`quantity of ${item.name}`} size={compact ? "sm" : "md"} />
+    <div className="flex gap-3">
+      <div className="w-[132px] shrink-0">
+        <QtyStepper value={qty} onChange={setQty} label={`quantity of ${item.name}`} />
       </div>
       <button
         type="button"
@@ -27,8 +27,8 @@ export function AddToCart({ item, compact }: { item: Omit<CartItem, "quantity">;
           setQty(1);
         }}
         aria-live="polite"
-        className={`${compact ? "h-9 w-full shrink-0 text-[13px] sm:w-auto sm:flex-1" : "h-11 flex-1 text-sm"} whitespace-nowrap rounded-lg px-3 font-medium transition-colors ${
-          added ? "bg-accent text-white" : "bg-ink text-white hover:bg-black"
+        className={`h-11 flex-1 whitespace-nowrap rounded-xl px-3 text-sm font-semibold transition-colors ${
+          added ? "bg-highlight text-paper" : "bg-cta text-on-cta hover:opacity-90"
         }`}
       >
         {added ? "Added ✓" : "Add to Cart"}

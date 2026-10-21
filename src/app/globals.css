@@ -10,6 +10,9 @@
   --color-accent: #1f5e4f;
   --color-accent-soft: #e8f0ed;
   --color-danger: #b42318;
+  --color-cta: #18181b;
+  --color-on-cta: #ffffff;
+  --color-highlight: #1f5e4f;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -24,6 +27,37 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Customer-facing pages: dark catalog theme. Admin keeps the light theme. */
+.store-theme {
+  --color-paper: #0d0c13;
+  --color-card: #16141f;
+  --color-ink: #f3f1f8;
+  --color-muted: #a39fb3;
+  --color-line: #2f2a3d;
+  --color-subtle: #221e2e;
+  --color-accent: #b9a1ff;
+  --color-accent-soft: rgb(185 161 255 / 0.14);
+  --color-danger: #ff8a80;
+  --color-cta: #5b3cc0;
+  --color-on-cta: #ffffff;
+  --color-highlight: #8fe3a0;
+  color-scheme: dark;
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+body:has(.store-theme) {
+  background: #0d0c13;
+}
+.store-hero {
+  background:
+    radial-gradient(60% 90% at 15% 0%, rgb(124 92 214 / 0.28), transparent 70%),
+    radial-gradient(50% 80% at 90% 100%, rgb(80 170 110 / 0.18), transparent 70%);
+}
+.store-theme select option {
+  background: #16141f;
+  color: #f3f1f8;
 }
 
 /* Numbers line up in prices and tables. */

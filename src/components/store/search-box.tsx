@@ -26,6 +26,9 @@ export function SearchBox() {
     router.replace(`/${qs ? `?${qs}` : ""}`, { scroll: false });
   };
 
+  // The catalog page has its own large search box; the header one is for other pages.
+  if (pathname === "/") return null;
+
   return (
     <form
       role="search"
@@ -52,7 +55,7 @@ export function SearchBox() {
         }}
         placeholder="Search products"
         aria-label="Search products"
-        className="h-10 w-full rounded-full border border-line bg-card pl-9 pr-4 text-[15px] placeholder:text-muted/70 focus:border-ink focus:outline-none"
+        className="h-10 w-full rounded-full border border-line bg-card pl-9 pr-4 text-[15px] placeholder:text-muted/70 focus:border-accent focus:outline-none"
       />
     </form>
   );
