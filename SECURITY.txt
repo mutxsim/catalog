@@ -1,3 +1,0 @@
-Supbase pwd: Catalog@2026!
-Admin user:admin@catalog.com
-Admin pwd:CAdmin@2026!
