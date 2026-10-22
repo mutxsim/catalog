@@ -23,6 +23,7 @@ export type Product = {
   category: string | null;
   image_path: string | null;
   published: boolean;
+  in_stock: boolean;
   /** Legacy (0002) grouping fields — kept in the database, no longer used by the UI. */
   group_name?: string | null;
   variant_name?: string | null;
@@ -34,6 +35,7 @@ export type Flavor = {
   product_id: string;
   name: string;
   image_path: string | null;
+  in_stock: boolean;
   sort_order: number;
 };
 
@@ -109,7 +111,7 @@ export type QuoteLine = {
 
 export type Quote = {
   lines: QuoteLine[];
-  unavailable: { product_id: string; flavor_id: string | null; reason: "unavailable" | "flavor_required" | "flavor_unavailable" }[];
+  unavailable: { product_id: string; flavor_id: string | null; reason: "unavailable" | "flavor_required" | "flavor_unavailable" | "out_of_stock" | "flavor_out_of_stock" }[];
   currency: string;
   subtotal_cents: number;
   tax_enabled: boolean;

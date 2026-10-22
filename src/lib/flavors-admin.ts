@@ -12,6 +12,7 @@ export const flavorRowsSchema = z
       id: z.uuid().nullable(),
       name: flavorNameSchema,
       removeImage: z.boolean().optional(),
+      inStock: z.boolean().optional(),
     }),
   )
   .max(300, "Up to 300 flavors per product.");
@@ -98,7 +99,7 @@ export async function syncFlavors(productId: string, rows: FlavorInput[], formDa
       imagePath = null;
     }
 
-    const fields = { name: r.name.trim(), sort_order: (i + 1) * 10, ...(imagePath !== undefined ? { image_path: imagePath } : {}) };
+    const fields = { name: r.name.trim(), sort_order: (i + 1) * 10, in_stock: r.inStock !== false, ...(imagePath !== undefined ? { image_path: imagePath } : {}) };
     if (r.id && keepIds.has(r.id)) {
       const before = existing.get(r.id)!;
       const { error } = await db.from("product_flavors").update(fields).eq("id", r.id);

@@ -7,7 +7,7 @@ import { publicStorageUrl } from "@/lib/public-url";
 import { getSettings } from "@/lib/settings";
 import type { Product } from "@/lib/types";
 import { btn, input } from "@/components/ui";
-import { moveProduct, togglePublished } from "./actions";
+import { moveProduct, toggleInStock, togglePublished } from "./actions";
 import { CsvImport } from "./csv-import";
 
 export const metadata: Metadata = { title: "Products" };
@@ -26,7 +26,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
 
   let query = supabase
     .from("products")
-    .select("id, name, price_cents, sku, category, image_path, published, sort_order", { count: "exact" })
+    .select("id, name, price_cents, sku, category, image_path, published, in_stock, sort_order", { count: "exact" })
     .order("sort_order")
     .order("name")
     .order("id")
@@ -40,11 +40,15 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
   const total = count ?? products.length;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const { data: flavorRows } = products.length
-    ? await supabase.from("product_flavors").select("product_id").in("product_id", products.map((p) => p.id))
+    ? await supabase.from("product_flavors").select("product_id, in_stock").in("product_id", products.map((p) => p.id))
     : { data: [] };
   const pageLink = (n: number) => `/admin/products?${new URLSearchParams({ ...(q ? { q } : {}), page: String(n) })}`;
   const flavorCount = new Map<string, number>();
-  for (const f of flavorRows ?? []) flavorCount.set(f.product_id, (flavorCount.get(f.product_id) ?? 0) + 1);
+  const flavorsOut = new Map<string, number>();
+  for (const f of flavorRows ?? []) {
+    flavorCount.set(f.product_id, (flavorCount.get(f.product_id) ?? 0) + 1);
+    if (f.in_stock === false) flavorsOut.set(f.product_id, (flavorsOut.get(f.product_id) ?? 0) + 1);
+  }
   const canReorder = !q;
 
   return (
@@ -107,6 +111,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
                         {(flavorCount.get(p.id) ?? 0) > 0 && (
                           <span className="block text-xs text-muted">
                             {flavorCount.get(p.id)} flavor{flavorCount.get(p.id) === 1 ? "" : "s"}
+                            {(flavorsOut.get(p.id) ?? 0) > 0 && <span className="text-danger"> · {flavorsOut.get(p.id)} out of stock</span>}
                           </span>
                         )}
                       </span>
@@ -124,6 +129,16 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
                         className={`rounded-full px-2.5 py-1 text-xs font-medium ${p.published ? "bg-accent-soft text-accent" : "bg-subtle text-muted"}`}
                       >
                         {p.published ? "Published" : "Hidden"}
+                      </button>
+                    </form>
+                    <form action={toggleInStock} className="mt-1">
+                      <input type="hidden" name="id" value={p.id} />
+                      <input type="hidden" name="in_stock" value={String(!p.in_stock)} />
+                      <button
+                        title={p.in_stock ? "Click to mark out of stock" : "Click to mark in stock"}
+                        className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${p.in_stock ? "bg-subtle text-muted" : "bg-subtle text-danger"}`}
+                      >
+                        {p.in_stock ? "In stock" : "Out of stock"}
                       </button>
                     </form>
                   </td>
@@ -158,8 +173,8 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Import / export CSV</summary>
         <div className="border-t border-line px-4 py-4 text-sm">
           <p className="text-muted">
-            Columns: <code className="font-mono text-xs">name, price, sku, category, flavors, description, published, sort_order, image_url</code>. List flavors separated by semicolons (e.g. <code className="font-mono text-xs">Mint; Grape; Mango</code>); a filled flavors cell replaces that product&apos;s flavor list. Rows with a
-            SKU that already exists update that product; other rows are added. An <code className="font-mono text-xs">image_url</code> link is downloaded and becomes the product photo (large imports may need running twice to finish all images; links already imported are skipped).
+            Columns: <code className="font-mono text-xs">name, price, sku, category, flavors, description, published, sort_order, image_url, in_stock</code>. List flavors separated by semicolons (e.g. <code className="font-mono text-xs">Mint; Grape; Mango</code>); a filled flavors cell replaces that product&apos;s flavor list. Rows with a
+            SKU that already exists update that product; other rows are added. An <code className="font-mono text-xs">image_url</code> link is downloaded and becomes the product photo (large imports may need running twice to finish all images; links already imported are skipped). <code className="font-mono text-xs">in_stock</code> (true/false) sets stock when filled in; leave it empty to keep the current stock.
           </p>
           <div className="mt-4 flex flex-wrap items-start gap-3">
             <a href="/admin/products/export" download className={btn.secondary}>Export CSV</a>

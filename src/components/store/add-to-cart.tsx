@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { cart, type CartItem } from "@/lib/cart";
 import { QtyStepper } from "./qty-stepper";
 
-export function AddToCart({ item, disabled }: { item: Omit<CartItem, "quantity">; disabled?: boolean }) {
+export function AddToCart({ item, disabled, disabledLabel }: { item: Omit<CartItem, "quantity">; disabled?: boolean; disabledLabel?: string }) {
   const [qty, setQty] = useState(1);
   const [added, setAdded] = useState(false);
   const label = item.flavorName ? `${item.name} (${item.flavorName})` : item.name;
@@ -34,7 +34,7 @@ export function AddToCart({ item, disabled }: { item: Omit<CartItem, "quantity">
           added ? "bg-highlight text-paper" : "bg-cta text-on-cta hover:opacity-90"
         }`}
       >
-        {added ? "Added ✓" : "Add to Cart"}
+        {added ? "Added ✓" : disabled && disabledLabel ? disabledLabel : "Add to Cart"}
       </button>
     </div>
   );

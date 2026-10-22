@@ -530,6 +530,39 @@ async function main() {
   assert.equal(kept, "Grape");
   step("checkout, confirmation, PDF invoice and WhatsApp-ready order all carry flavor + product images; history unchanged by later edits");
 
+  // ---- Out of stock: whole product, then a single flavor
+  await admin.goto(`${APP}/admin/products?q=Energy%20Shot`);
+  const shotRow = admin.getByRole("row", { name: /Energy Shot 2 oz, 12 ct/ });
+  await shotRow.getByRole("button", { name: "In stock" }).click();
+  await shotRow.getByRole("button", { name: "Out of stock" }).waitFor();
+  const [{ in_stock: shotStock }] = await sql("select in_stock from public.products where id = $1", [shotId]);
+  assert.equal(shotStock, false);
+  await shopper.goto(`${APP}/?q=energy%20shot`);
+  const oosCard = shopper.locator("article", { has: shopper.getByRole("heading", { name: "Energy Shot 2 oz, 12 ct" }) });
+  await oosCard.getByText("Out of stock", { exact: true }).waitFor();
+  assert.equal(await oosCard.getByRole("button", { name: "Out of Stock" }).isDisabled(), true, "out-of-stock product can't be added");
+  await shopper.screenshot({ path: join(shots, "21-out-of-stock-mobile.png"), fullPage: true });
+  const [{ id: mangoId }] = await sql("select id from public.product_flavors where product_id = $1 and name = 'Mango'", [shotId]);
+  const staleQuote = await (await shopper.request.post(`${APP}/api/quote`, { data: { items: [{ productId: shotId, flavorId: mangoId, quantity: 1 }] } })).json();
+  assert.equal(staleQuote.quote.unavailable[0].reason, "out_of_stock", "the server refuses an out-of-stock item already in a cart");
+  await shotRow.getByRole("button", { name: "Out of stock" }).click();
+  await shotRow.getByRole("button", { name: "In stock" }).waitFor();
+
+  await admin.goto(`${APP}/admin/products/${shotId}`);
+  await admin.getByRole("button", { name: "Kiwi: in stock" }).click();
+  await admin.getByRole("button", { name: "Kiwi: out of stock" }).waitFor();
+  await admin.getByText(/1 out of stock/).first().waitFor();
+  await admin.getByRole("button", { name: /^Save/ }).click();
+  await admin.waitForURL(/\/admin\/products\?saved=/);
+  await admin.getByText(/1 out of stock/).first().waitFor();
+  await shopper.goto(`${APP}/?q=energy%20shot`);
+  const kiwiOption = oosCard.getByLabel("Flavor").locator("option", { hasText: "Kiwi — out of stock" });
+  assert.equal(await kiwiOption.isDisabled(), true, "out-of-stock flavor can't be chosen");
+  await oosCard.getByText(/6 of 7 available/).waitFor({ state: "attached" });
+  await oosCard.getByLabel("Flavor").selectOption({ label: "Mango" });
+  assert.equal(await oosCard.getByRole("button", { name: "Add to Cart" }).isDisabled(), false, "other flavors still orderable");
+  step("products and single flavors can be marked out of stock: shown to customers, can't be added, refused by the server");
+
   // ---- Logout ends the session
   await shopper.getByRole("button", { name: "Log out" }).click();
   await shopper.waitForURL(/\/login\?reason=logout/);

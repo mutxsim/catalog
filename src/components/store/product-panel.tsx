@@ -11,7 +11,8 @@ import { AddToCart } from "./add-to-cart";
 /**
  * A product card (grid) or full product view (detail page). Products with
  * flavors get a "Flavor" dropdown; a flavor must be chosen before adding to
- * the cart. A single flavor is selected automatically.
+ * the cart. A single flavor is selected automatically. Out-of-stock products
+ * and flavors stay visible but can't be added.
  */
 export function ProductPanel({
   product,
@@ -28,12 +29,15 @@ export function ProductPanel({
 }) {
   const { flavors } = product;
   const selectId = useId();
+  const available = flavors.filter((f) => f.in_stock);
+  const outOfStock = !product.in_stock || (flavors.length > 0 && available.length === 0);
   const [flavorId, setFlavorId] = useState<string>(() => {
+    if (outOfStock) return "";
     if (flavors.length === 1) return flavors[0].id;
-    return flavors.some((f) => f.id === initialFlavorId) ? initialFlavorId! : "";
+    return available.some((f) => f.id === initialFlavorId) ? initialFlavorId! : "";
   });
   const flavor = flavors.find((f) => f.id === flavorId) ?? null;
-  const needsFlavor = flavors.length > 0 && !flavor;
+  const needsFlavor = !outOfStock && flavors.length > 0 && !flavor;
   const detail = layout === "detail";
   const image = publicStorageUrl("product-images", flavor?.image_path ?? product.image_path);
 
@@ -64,7 +68,10 @@ export function ProductPanel({
           <Link href={`/p/${product.id}`} className="hover:underline hover:underline-offset-4">{product.name}</Link>
         </h2>
       )}
-      <p className="tabular mt-2 text-lg">{formatMoney(product.price_cents, currency)}</p>
+      <p className="tabular mt-2 flex flex-wrap items-center gap-2 text-lg">
+        {formatMoney(product.price_cents, currency)}
+        {outOfStock && <span className="rounded-full bg-subtle px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-danger">Out of stock</span>}
+      </p>
       {product.sku && <p className="mt-0.5 text-sm text-muted">SKU {product.sku}</p>}
 
       {flavors.length > 0 && (
@@ -73,23 +80,29 @@ export function ProductPanel({
             Flavor
           </label>
           {flavors.length === 1 ? (
-            <p id={selectId} className="rounded-2xl bg-subtle px-4 py-3 text-[15px] font-semibold">{flavors[0].name}</p>
+            <p id={selectId} className="rounded-2xl bg-subtle px-4 py-3 text-[15px] font-semibold">
+              {flavors[0].name}
+              {!flavors[0].in_stock && <span className="font-normal text-danger"> — out of stock</span>}
+            </p>
           ) : (
             <div className="relative">
               <select
                 id={selectId}
                 value={flavorId}
                 onChange={(e) => setFlavorId(e.target.value)}
+                disabled={outOfStock}
                 aria-describedby={needsFlavor ? `${selectId}-hint` : undefined}
                 className={`h-12 w-full appearance-none rounded-2xl border bg-subtle pl-4 pr-11 text-[15px] focus:border-accent focus:outline-none ${
                   flavor ? "border-accent/60 font-semibold text-ink" : "border-line text-muted"
                 }`}
               >
                 <option value="" disabled>
-                  Select a flavor ({flavors.length})
+                  {outOfStock ? "All flavors out of stock" : `Select a flavor (${available.length}${available.length < flavors.length ? ` of ${flavors.length}` : ""} available)`}
                 </option>
                 {flavors.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
+                  <option key={f.id} value={f.id} disabled={!f.in_stock}>
+                    {f.in_stock ? f.name : `${f.name} — out of stock`}
+                  </option>
                 ))}
               </select>
               <svg className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-muted" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
@@ -115,7 +128,8 @@ export function ProductPanel({
       <div className={detail ? "mt-6" : "mt-auto pt-5"}>
         <AddToCart
           key={flavorId || "none"}
-          disabled={needsFlavor}
+          disabled={needsFlavor || outOfStock}
+          disabledLabel={outOfStock ? "Out of Stock" : undefined}
           item={{
             productId: product.id,
             flavorId: flavor?.id ?? null,

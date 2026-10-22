@@ -89,6 +89,14 @@ export function ProductForm({
             <span className="block text-muted">Visible to customers in the catalog.</span>
           </span>
         </label>
+
+        <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-line bg-card px-3 py-3">
+          <input type="checkbox" name="in_stock" defaultChecked={product ? product.in_stock !== false : true} className="h-4 w-4 accent-[var(--color-accent)]" />
+          <span className="text-sm">
+            <span className="font-medium">In stock</span>
+            <span className="block text-muted">Untick to show it as out of stock — customers can still see it but can&apos;t order it. Single flavors can be marked out of stock in the flavor list.</span>
+          </span>
+        </label>
       </div>
 
       <div>

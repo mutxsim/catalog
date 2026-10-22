@@ -3,8 +3,8 @@ import { createPublicClient } from "@/lib/supabase/server";
 import { fetchAll, inChunks } from "@/lib/fetch-all";
 import type { Flavor, Product, ProductWithFlavors } from "@/lib/types";
 
-export const PRODUCT_COLUMNS = "id, name, price_cents, sku, description, category, image_path, published, sort_order";
-export const FLAVOR_COLUMNS = "id, product_id, name, image_path, sort_order";
+export const PRODUCT_COLUMNS = "id, name, price_cents, sku, description, category, image_path, published, in_stock, sort_order";
+export const FLAVOR_COLUMNS = "id, product_id, name, image_path, in_stock, sort_order";
 export const CATALOG_PAGE_SIZE = 48;
 
 /** Attach each product's flavors (in display order). Looks them up in small batches. */

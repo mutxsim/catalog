@@ -14,7 +14,7 @@ describe("image_url import safety", () => {
   it("rejects links with credentials", async () => {
     await expect(downloadImage("https://user:pw@example.com/a.png")).rejects.toThrow(/credentials/);
   });
-  it("exports image_url as the last CSV column", () => {
-    expect(PRODUCT_CSV_HEADER.at(-1)).toBe("image_url");
+  it("includes image_url and in_stock columns in the CSV", () => {
+    expect(PRODUCT_CSV_HEADER.slice(-2)).toEqual(["image_url", "in_stock"]);
   });
 });

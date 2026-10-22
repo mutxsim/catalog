@@ -309,3 +309,42 @@ describe("customer access codes (0003)", () => {
     expect(rl).toBe(1);
   });
 });
+
+describe("out of stock (stock migration)", () => {
+  it("refuses out-of-stock products and flavors in quotes and orders, and restocking restores them", async () => {
+    const plain = await addProduct("Ice 10lb", 300);
+    const vape = await addProduct("Disposable 2g", 2000);
+    const f = await db.query<{ id: string; name: string }>(
+      "insert into public.product_flavors (product_id, name, sort_order) values ($1, 'Mango', 1), ($1, 'Kiwi', 2) returning id, name", [vape],
+    );
+    const mango = f.rows.find((r) => r.name === "Mango")!.id;
+    const kiwi = f.rows.find((r) => r.name === "Kiwi")!.id;
+
+    // New products and flavors start in stock.
+    const ok = await quote([{ product_id: plain, quantity: 1 }, { product_id: vape, flavor_id: kiwi, quantity: 1 }]);
+    expect(ok.unavailable).toEqual([]);
+
+    await db.query("update public.products set in_stock = false where id = $1", [plain]);
+    await db.query("update public.product_flavors set in_stock = false where id = $1", [kiwi]);
+    const q = await quote([
+      { product_id: plain, quantity: 1 },
+      { product_id: vape, flavor_id: kiwi, quantity: 1 },
+      { product_id: vape, flavor_id: mango, quantity: 2 },
+    ]);
+    expect(q.unavailable).toEqual([
+      { product_id: plain, flavor_id: null, reason: "out_of_stock" },
+      { product_id: vape, flavor_id: kiwi, reason: "flavor_out_of_stock" },
+    ]);
+    expect(q.lines).toHaveLength(1); // Mango is still orderable
+    await expect(place("Stock Test", [{ product_id: vape, flavor_id: kiwi, quantity: 1 }], 2000)).rejects.toThrow();
+
+    // The whole product out of stock blocks every flavor.
+    await db.query("update public.products set in_stock = false where id = $1", [vape]);
+    expect((await quote([{ product_id: vape, flavor_id: mango, quantity: 1 }])).unavailable[0].reason).toBe("out_of_stock");
+
+    await db.query("update public.products set in_stock = true where id in ($1, $2)", [plain, vape]);
+    await db.query("update public.product_flavors set in_stock = true where id = $1", [kiwi]);
+    const o = await place("Stock Test", [{ product_id: vape, flavor_id: kiwi, quantity: 1 }, { product_id: plain, quantity: 1 }], 2300);
+    expect(o.created).toBe(true);
+  });
+});

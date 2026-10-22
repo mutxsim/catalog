@@ -13,10 +13,11 @@ export async function getCategories() {
 
 export async function getFlavorRows(productId: string) {
   const { supabase } = await requireAdmin();
-  const { data } = await supabase.from("product_flavors").select("id, name, image_path").eq("product_id", productId).order("sort_order").order("name");
-  return ((data ?? []) as { id: string; name: string; image_path: string | null }[]).map((f) => ({
+  const { data } = await supabase.from("product_flavors").select("id, name, image_path, in_stock").eq("product_id", productId).order("sort_order").order("name");
+  return ((data ?? []) as { id: string; name: string; image_path: string | null; in_stock: boolean }[]).map((f) => ({
     id: f.id,
     name: f.name,
+    inStock: f.in_stock !== false,
     imageUrl: publicStorageUrl("product-images", f.image_path),
   }));
 }

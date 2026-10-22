@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { btn, hint, input } from "@/components/ui";
 
-export type FlavorRow = { id: string | null; name: string; imageUrl: string | null };
+export type FlavorRow = { id: string | null; name: string; imageUrl: string | null; inStock: boolean };
 type Row = FlavorRow & { key: string; removeImage: boolean; preview: string | null };
 
 let counter = 0;
@@ -36,7 +36,7 @@ export function FlavorEditor({ initial }: { initial: FlavorRow[] }) {
     if (!name) return;
     if (name.length > 120) return setError("Flavor names must be 120 characters or fewer.");
     if (exists(name)) return setError(`“${name}” is already in the list.`);
-    setRows((r) => [...r, { key: newKey(), id: null, name, imageUrl: null, removeImage: false, preview: null }]);
+    setRows((r) => [...r, { key: newKey(), id: null, name, imageUrl: null, inStock: true, removeImage: false, preview: null }]);
     setDraft("");
     setError(null);
     draftRef.current?.focus();
@@ -52,12 +52,12 @@ export function FlavorEditor({ initial }: { initial: FlavorRow[] }) {
       return next;
     });
 
-  const payload = JSON.stringify(rows.map((r) => ({ key: r.key, id: r.id, name: r.name, removeImage: r.removeImage })));
+  const payload = JSON.stringify(rows.map((r) => ({ key: r.key, id: r.id, name: r.name, removeImage: r.removeImage, inStock: r.inStock })));
 
   return (
     <fieldset className="rounded-lg border border-line bg-card px-3 pb-4 pt-3">
       <legend className="px-1 text-sm font-medium">
-        Flavors <span className="font-normal text-muted">({rows.length}) · optional</span>
+        Flavors <span className="font-normal text-muted">({rows.length}{rows.some((r) => !r.inStock) ? ` · ${rows.filter((r) => !r.inStock).length} out of stock` : ""}) · optional</span>
       </legend>
       <input type="hidden" name="flavors_json" value={payload} />
 
@@ -127,6 +127,16 @@ export function FlavorEditor({ initial }: { initial: FlavorRow[] }) {
                   aria-invalid={duplicate || r.name.trim() === "" ? true : undefined}
                   className={`${input} h-10 min-w-0 flex-1 ${duplicate || r.name.trim() === "" ? "border-danger" : ""}`}
                 />
+                <button
+                  type="button"
+                  onClick={() => update(r.key, { inStock: !r.inStock })}
+                  aria-pressed={!r.inStock}
+                  aria-label={`${r.name}: ${r.inStock ? "in stock" : "out of stock"}`}
+                  title={r.inStock ? "Click to mark out of stock" : "Click to mark in stock"}
+                  className={`h-9 shrink-0 whitespace-nowrap rounded-full px-2.5 text-xs font-medium ${r.inStock ? "bg-accent-soft text-accent" : "bg-subtle text-danger"}`}
+                >
+                  {r.inStock ? "In stock" : "Out of stock"}
+                </button>
                 {(r.imageUrl || r.preview) && !r.removeImage && (
                   <button type="button" onClick={() => update(r.key, { removeImage: true, preview: null })} className={btn.ghost}>
                     No image
@@ -147,7 +157,7 @@ export function FlavorEditor({ initial }: { initial: FlavorRow[] }) {
       )}
       <p className={hint}>
         Customers choose a flavor before adding this product to their cart. Price and SKU come from the product. Tap the square to give a flavor its own photo;
-        otherwise the product photo is used. Changes apply when you save.
+        otherwise the product photo is used. Tap &ldquo;In stock&rdquo; to mark a single flavor out of stock. Changes apply when you save.
       </p>
     </fieldset>
   );

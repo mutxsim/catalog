@@ -69,4 +69,6 @@ export const UNAVAILABLE_TEXT = {
   unavailable: "No longer available",
   flavor_required: "Choose a flavor — remove and add again",
   flavor_unavailable: "This flavor is no longer available",
+  out_of_stock: "Out of stock — remove it to continue",
+  flavor_out_of_stock: "This flavor is out of stock — remove it to continue",
 } as const;

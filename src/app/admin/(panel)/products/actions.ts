@@ -75,7 +75,7 @@ export async function saveProduct(_prev: FormState, formData: FormData): Promise
     imagePath = null;
   }
 
-  const row = { ...rest, price_cents: price, ...(imagePath !== undefined ? { image_path: imagePath, image_source_url: null } : {}) };
+  const row = { ...rest, price_cents: price, in_stock: formData.get("in_stock") === "on", ...(imagePath !== undefined ? { image_path: imagePath, image_source_url: null } : {}) };
   const { error } = id
     ? await supabase.from("products").update(row).eq("id", id)
     : await supabase.from("products").insert({ id: productId, ...row });
@@ -116,6 +116,14 @@ export async function togglePublished(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   const published = formData.get("published") === "true";
   await supabase.from("products").update({ published }).eq("id", id);
+  refresh();
+}
+
+export async function toggleInStock(formData: FormData) {
+  const { supabase } = await requireAdmin();
+  const id = String(formData.get("id") ?? "");
+  const inStock = formData.get("in_stock") === "true";
+  await supabase.from("products").update({ in_stock: inStock }).eq("id", id);
   refresh();
 }
 
@@ -189,7 +197,9 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
       continue;
     }
     const { price, ...rest } = parsed.data;
-    const row = { ...rest, price_cents: price };
+    const stockCell = get("in_stock")?.trim();
+    // Only change stock when the column is present and filled in.
+    const row = { ...rest, price_cents: price, ...(stockCell ? { in_stock: parseBool(stockCell, true) } : {}) };
     const { error, data } = existingId
       ? await supabase.from("products").update(row).eq("id", existingId).select("id").single()
       : await supabase.from("products").insert(row).select("id").single();
@@ -202,9 +212,13 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
     const flavorCell = get("flavors")?.trim();
     if (flavorCell && data) {
       const names = [...new Set(flavorCell.split(";").map((n) => n.trim()).filter(Boolean))];
-      const { data: cur } = await supabase.from("product_flavors").select("id, name").eq("product_id", data.id);
-      const byName = new Map((cur ?? []).map((f) => [String(f.name).toLowerCase(), f.id as string]));
-      const rowsIn = names.map((name, k) => ({ key: `csv${k}`, id: byName.get(name.toLowerCase()) ?? null, name }));
+      const { data: cur } = await supabase.from("product_flavors").select("id, name, in_stock").eq("product_id", data.id);
+      const byName = new Map((cur ?? []).map((f) => [String(f.name).toLowerCase(), { id: f.id as string, inStock: f.in_stock !== false }]));
+      // Existing flavors keep their stock setting; new ones start in stock.
+      const rowsIn = names.map((name, k) => {
+        const found = byName.get(name.toLowerCase());
+        return { key: `csv${k}`, id: found?.id ?? null, name, inStock: found?.inStock ?? true };
+      });
       const checked = parseFlavorPayload(JSON.stringify(rowsIn));
       const res = checked && "rows" in checked ? await syncFlavors(data.id, checked.rows) : { error: checked && "error" in checked ? checked.error : undefined };
       if (res.error) problems.push(`Row ${r + 1}: flavors — ${res.error}`);
