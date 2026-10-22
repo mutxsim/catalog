@@ -14,7 +14,7 @@ No branding is built in: business name, logo, address, currency, tax and invoice
 At [supabase.com](https://supabase.com) create a project (the free tier is fine).
 
 ### 2. Create the database
-In the Supabase dashboard open **SQL Editor**, paste the whole of `supabase/migrations/0001_init.sql`, and run it. Then do the same with `supabase/migrations/0002_flavors.sql` and `supabase/migrations/0003_flavors_customers_activity.sql`, in that order. Both only add things; existing products, orders and invoices are untouched. This creates the tables, pricing/order functions, row-level security and the three storage buckets (`product-images`, `branding` public; `invoices` private).
+In the Supabase dashboard open **SQL Editor**, paste the whole of `supabase/migrations/0001_init.sql`, and run it. Then do the same with `supabase/migrations/0002_flavors.sql`, `supabase/migrations/0003_flavors_customers_activity.sql` and `supabase/migrations/0004_image_source_url.sql`, in that order. They only add things; existing products, orders and invoices are untouched. This creates the tables, pricing/order functions, row-level security and the three storage buckets (`product-images`, `branding` public; `invoices` private).
 
 Then in **Authentication → Sign In / Providers**, turn **off** "Allow new users to sign up". Only the admin account you create below should exist.
 
@@ -111,6 +111,9 @@ Recorded per attempt (server-side only): time (UTC, shown in `STORE_TIMEZONE`), 
 **Location** comes from Vercel's built-in IP geolocation headers (`x-vercel-ip-city`, `-country-region`, `-country`): free, no third-party service, and the IP is not sent anywhere else. It's approximate and can reflect a VPN, mobile carrier or office network. On other hosts location shows as Unknown unless your platform adds those headers; if you run behind your own proxy, set `TRUSTED_IP_HEADER` to the header it sets with the client IP.
 
 **Retention:** login records are kept for `Settings → Keep login records for (days)` (default 365) and removed only when you press **Login Activity → Retention → Remove old login records**.
+
+## Importing product photos from links
+The product CSV has an optional `image_url` column. On import, each link is downloaded on the server, converted to WebP (max 1200px) and becomes the product photo. Only public `http(s)` links are accepted — links to private/internal addresses are refused — and each image must be under 10 MB. Imports spend at most about 3½ minutes downloading; if a big file isn't finished, the message says how many are left, and running the same import again continues (links already imported for a product are skipped). Rows whose link fails are listed in the import message and keep their current photo. Uploading a photo by hand later replaces the imported one. Export includes the `image_url` column (the original link, or the stored photo's URL).
 
 ## Invoice images
 Each invoice line shows a small thumbnail of the product (or the selected flavor's own photo) next to the name and flavor — in the PDF (download and print) and on the order confirmation page. The image used is recorded on the order line at checkout, and images referenced by past orders are never deleted from storage, so old invoices keep their pictures. Missing or unreadable images show a neutral placeholder; images are shrunk server-side (sharp) before being embedded. The PDF is generated once at checkout and stored, so reopening it later always gives the same file.

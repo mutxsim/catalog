@@ -10,6 +10,7 @@ import { firstError, productSchema } from "@/lib/validation";
 import { PRODUCT_CSV_HEADER, parseBool, parseCsv } from "@/lib/csv";
 import { parseFlavorPayload, removeUnreferencedImages, syncFlavors } from "@/lib/flavors-admin";
 import { fetchAll } from "@/lib/fetch-all";
+import { downloadImage } from "@/lib/remote-image";
 
 export type FormState = { error?: string; ok?: string } | null;
 
@@ -74,7 +75,7 @@ export async function saveProduct(_prev: FormState, formData: FormData): Promise
     imagePath = null;
   }
 
-  const row = { ...rest, price_cents: price, ...(imagePath !== undefined ? { image_path: imagePath } : {}) };
+  const row = { ...rest, price_cents: price, ...(imagePath !== undefined ? { image_path: imagePath, image_source_url: null } : {}) };
   const { error } = id
     ? await supabase.from("products").update(row).eq("id", id)
     : await supabase.from("products").insert({ id: productId, ...row });
@@ -155,9 +156,12 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
   if (col("name") < 0 || col("price") < 0) return { error: 'The CSV needs at least "name" and "price" columns.' };
   if (rows.length > 2001) return { error: "Import up to 2,000 products at a time." };
 
-  const existing = await fetchAll<{ id: string; sku: string | null; sort_order: number }>((from, to) =>
-    supabase.from("products").select("id, sku, sort_order").order("id").range(from, to),
+  const started = Date.now();
+  const existing = await fetchAll<{ id: string; sku: string | null; sort_order: number; image_path: string | null; image_source_url: string | null }>((from, to) =>
+    supabase.from("products").select("id, sku, sort_order, image_path, image_source_url").order("id").range(from, to),
   );
+  const byId = new Map(existing.map((p) => [p.id, p]));
+  const imageJobs: { row: number; productId: string; url: string; previous: string | null }[] = [];
   const bySku = new Map(existing.filter((p) => p.sku).map((p) => [p.sku!.toLowerCase(), p.id]));
   let nextOrder = existing.reduce((m, p) => Math.max(m, p.sort_order), 0) + 10;
 
@@ -206,6 +210,16 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
       if (res.error) problems.push(`Row ${r + 1}: flavors — ${res.error}`);
     }
 
+    // "image_url" column: download the picture into storage. Skipped when this
+    // product already has the image from the same link (so re-imports are fast).
+    const imageUrl = get("image_url")?.trim();
+    if (imageUrl && data) {
+      const before = byId.get(data.id);
+      if (!/^https?:\/\/\S+$/i.test(imageUrl) || imageUrl.length > 2000) problems.push(`Row ${r + 1}: image_url isn't a valid http(s) link`);
+      else if (!(before?.image_path && before.image_source_url === imageUrl))
+        imageJobs.push({ row: r + 1, productId: data.id, url: imageUrl, previous: before?.image_path ?? null });
+    }
+
     if (existingId) updated++;
     else {
       created++;
@@ -214,8 +228,45 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
     }
   }
 
+  // Download images a few at a time, within a time budget. Whatever doesn't
+  // fit is picked up by running the same import again.
+  const IMAGE_BUDGET_MS = 200_000;
+  let imagesDone = 0;
+  let imagesLeft = 0;
+  const service = createServiceClient();
+  const queue = [...imageJobs];
+  const replaced: (string | null)[] = [];
+  async function worker() {
+    for (let job = queue.shift(); job; job = queue.shift()) {
+      if (Date.now() - started > IMAGE_BUDGET_MS) {
+        imagesLeft++;
+        continue;
+      }
+      try {
+        const img = await downloadImage(job.url);
+        const path = `products/${job.productId}/${randomUUID()}.${img.ext}`;
+        const { error: upErr } = await service.storage.from("product-images").upload(path, img.bytes, { contentType: img.mime, cacheControl: "31536000", upsert: false });
+        if (upErr) throw new Error("upload to storage failed");
+        const { error: dbErr } = await supabase.from("products").update({ image_path: path, image_source_url: job.url }).eq("id", job.productId);
+        if (dbErr) {
+          await service.storage.from("product-images").remove([path]);
+          throw new Error("couldn't save the image");
+        }
+        replaced.push(job.previous);
+        imagesDone++;
+      } catch (e) {
+        problems.push(`Row ${job.row}: image — ${e instanceof Error ? e.message : "download failed"}`);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: 6 }, worker));
+  await removeUnreferencedImages(replaced);
+
   refresh();
-  const summary = `Imported: ${created} added, ${updated} updated.`;
+  const imageNote = imageJobs.length
+    ? ` Images: ${imagesDone} downloaded${imagesLeft ? `, ${imagesLeft} still to do — run the same import again to continue` : ""}.`
+    : "";
+  const summary = `Imported: ${created} added, ${updated} updated.${imageNote}`;
   if (problems.length) return { error: `${summary} ${problems.length} skipped — ${problems.slice(0, 5).join("; ")}${problems.length > 5 ? "…" : ""}` };
   return { ok: summary };
 }

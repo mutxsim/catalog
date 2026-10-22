@@ -11,6 +11,8 @@ import { moveProduct, togglePublished } from "./actions";
 import { CsvImport } from "./csv-import";
 
 export const metadata: Metadata = { title: "Products" };
+// CSV imports with image links download pictures; allow the action time to run.
+export const maxDuration = 300;
 const PAGE_SIZE = 50;
 
 export default async function ProductsPage({ searchParams }: PageProps<"/admin/products">) {
@@ -156,8 +158,8 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Import / export CSV</summary>
         <div className="border-t border-line px-4 py-4 text-sm">
           <p className="text-muted">
-            Columns: <code className="font-mono text-xs">name, price, sku, category, flavors, description, published, sort_order</code>. List flavors separated by semicolons (e.g. <code className="font-mono text-xs">Mint; Grape; Mango</code>); a filled flavors cell replaces that product&apos;s flavor list. Rows with a
-            SKU that already exists update that product; other rows are added. Images are managed per product.
+            Columns: <code className="font-mono text-xs">name, price, sku, category, flavors, description, published, sort_order, image_url</code>. List flavors separated by semicolons (e.g. <code className="font-mono text-xs">Mint; Grape; Mango</code>); a filled flavors cell replaces that product&apos;s flavor list. Rows with a
+            SKU that already exists update that product; other rows are added. An <code className="font-mono text-xs">image_url</code> link is downloaded and becomes the product photo (large imports may need running twice to finish all images; links already imported are skipped).
           </p>
           <div className="mt-4 flex flex-wrap items-start gap-3">
             <a href="/admin/products/export" download className={btn.secondary}>Export CSV</a>
