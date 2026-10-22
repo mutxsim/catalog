@@ -9,6 +9,7 @@ import { MAX_PRODUCT_IMAGE_BYTES, readUpload } from "@/lib/uploads";
 import { firstError, productSchema } from "@/lib/validation";
 import { PRODUCT_CSV_HEADER, parseBool, parseCsv } from "@/lib/csv";
 import { parseFlavorPayload, removeUnreferencedImages, syncFlavors } from "@/lib/flavors-admin";
+import { fetchAll } from "@/lib/fetch-all";
 
 export type FormState = { error?: string; ok?: string } | null;
 
@@ -123,8 +124,9 @@ export async function moveProduct(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   const dir = formData.get("dir") === "up" ? -1 : 1;
 
-  const { data } = await supabase.from("products").select("id, sort_order").order("sort_order").order("name").order("id");
-  if (!data) return;
+  const data = await fetchAll<{ id: string; sort_order: number }>((from, to) =>
+    supabase.from("products").select("id, sort_order").order("sort_order").order("name").order("id").range(from, to),
+  );
   const list = data.map((p) => p.id);
   const i = list.indexOf(id);
   const j = i + dir;
@@ -153,9 +155,11 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
   if (col("name") < 0 || col("price") < 0) return { error: 'The CSV needs at least "name" and "price" columns.' };
   if (rows.length > 2001) return { error: "Import up to 2,000 products at a time." };
 
-  const { data: existing } = await supabase.from("products").select("id, sku, sort_order");
-  const bySku = new Map((existing ?? []).filter((p) => p.sku).map((p) => [p.sku!.toLowerCase(), p.id]));
-  let nextOrder = Math.max(0, ...(existing ?? []).map((p) => p.sort_order)) + 10;
+  const existing = await fetchAll<{ id: string; sku: string | null; sort_order: number }>((from, to) =>
+    supabase.from("products").select("id, sku, sort_order").order("id").range(from, to),
+  );
+  const bySku = new Map(existing.filter((p) => p.sku).map((p) => [p.sku!.toLowerCase(), p.id]));
+  let nextOrder = existing.reduce((m, p) => Math.max(m, p.sort_order), 0) + 10;
 
   let created = 0;
   let updated = 0;
@@ -174,7 +178,7 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
       category: get("category") ?? "",
       description: get("description") ?? "",
       published: parseBool(get("published"), true),
-      sort_order: sortRaw || String(existingId ? (existing!.find((p) => p.id === existingId)?.sort_order ?? 0) : nextOrder),
+      sort_order: sortRaw || String(existingId ? (existing.find((p) => p.id === existingId)?.sort_order ?? 0) : nextOrder),
     });
     if (!parsed.success) {
       problems.push(`Row ${r + 1}: ${firstError(parsed.error)}`);

@@ -1,11 +1,14 @@
 import "server-only";
 import { requireAdmin } from "@/lib/auth";
 import { publicStorageUrl } from "@/lib/public-url";
+import { fetchAll } from "@/lib/fetch-all";
 
 export async function getCategories() {
   const { supabase } = await requireAdmin();
-  const { data } = await supabase.from("products").select("category").not("category", "is", null);
-  return [...new Set((data ?? []).map((r) => r.category as string))].sort((a, b) => a.localeCompare(b));
+  const data = await fetchAll<{ category: string }>((from, to) =>
+    supabase.from("products").select("category").not("category", "is", null).order("id").range(from, to),
+  );
+  return [...new Set(data.map((r) => r.category))].sort((a, b) => a.localeCompare(b));
 }
 
 export async function getFlavorRows(productId: string) {

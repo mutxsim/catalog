@@ -11,29 +11,36 @@ import { moveProduct, togglePublished } from "./actions";
 import { CsvImport } from "./csv-import";
 
 export const metadata: Metadata = { title: "Products" };
+const PAGE_SIZE = 50;
 
 export default async function ProductsPage({ searchParams }: PageProps<"/admin/products">) {
   const { supabase } = await requireAdmin();
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q.trim() : "";
   const saved = typeof sp.saved === "string" ? sp.saved : null;
+  const page = Math.max(1, Math.floor(Number(sp.page)) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
   const settings = await getSettings();
 
   let query = supabase
     .from("products")
-    .select("id, name, price_cents, sku, category, image_path, published, sort_order")
+    .select("id, name, price_cents, sku, category, image_path, published, sort_order", { count: "exact" })
     .order("sort_order")
     .order("name")
-    .order("id");
+    .order("id")
+    .range(offset, offset + PAGE_SIZE - 1);
   if (q) {
     const term = q.replace(/[%_,()]/g, " ");
     query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%`);
   }
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   const products = (data ?? []) as Product[];
+  const total = count ?? products.length;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const { data: flavorRows } = products.length
     ? await supabase.from("product_flavors").select("product_id").in("product_id", products.map((p) => p.id))
     : { data: [] };
+  const pageLink = (n: number) => `/admin/products?${new URLSearchParams({ ...(q ? { q } : {}), page: String(n) })}`;
   const flavorCount = new Map<string, number>();
   for (const f of flavorRows ?? []) flavorCount.set(f.product_id, (flavorCount.get(f.product_id) ?? 0) + 1);
   const canReorder = !q;
@@ -78,12 +85,12 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
                         <form action={moveProduct}>
                           <input type="hidden" name="id" value={p.id} />
                           <input type="hidden" name="dir" value="up" />
-                          <button disabled={i === 0} aria-label={`Move ${p.name} up`} className="h-7 w-7 rounded text-muted hover:bg-subtle hover:text-ink disabled:opacity-20">↑</button>
+                          <button disabled={offset + i === 0} aria-label={`Move ${p.name} up`} className="h-7 w-7 rounded text-muted hover:bg-subtle hover:text-ink disabled:opacity-20">↑</button>
                         </form>
                         <form action={moveProduct}>
                           <input type="hidden" name="id" value={p.id} />
                           <input type="hidden" name="dir" value="down" />
-                          <button disabled={i === products.length - 1} aria-label={`Move ${p.name} down`} className="h-7 w-7 rounded text-muted hover:bg-subtle hover:text-ink disabled:opacity-20">↓</button>
+                          <button disabled={offset + i === total - 1} aria-label={`Move ${p.name} down`} className="h-7 w-7 rounded text-muted hover:bg-subtle hover:text-ink disabled:opacity-20">↓</button>
                         </form>
                       </div>
                     )}
@@ -134,6 +141,16 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
           </tbody>
         </table>
       </div>
+
+      {pages > 1 && (
+        <div className="mt-4 flex items-center justify-between text-sm text-muted">
+          <span>{total} products · page {page} of {pages}</span>
+          <div className="flex gap-2">
+            {page > 1 && <Link href={pageLink(page - 1)} className={btn.small}>Previous</Link>}
+            {page < pages && <Link href={pageLink(page + 1)} className={btn.small}>Next</Link>}
+          </div>
+        </div>
+      )}
 
       <details className="mt-8 rounded-xl border border-line bg-card">
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Import / export CSV</summary>

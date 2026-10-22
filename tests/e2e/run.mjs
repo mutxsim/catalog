@@ -136,6 +136,14 @@ async function seed() {
     await sql("insert into public.product_flavors (product_id, name, image_path, sort_order) values ($1, $2, $3, $4)", [shotId, flavor, image, (k + 1) * 10]);
   }
 
+  // A large catalog like a real inventory import (1,350 more products, a few with flavors).
+  await sql(
+    "insert into public.products (name, price_cents, sku, category, published, sort_order) select 'Bulk Item ' || lpad(g::text, 4, '0'), 1000 + g, 'BULK-' || g, 'THCA', true, 100000 + g from generate_series(1, 1350) g",
+  );
+  await sql(
+    "insert into public.product_flavors (product_id, name, sort_order) select p.id, f.name, f.ord from public.products p cross join (values ('Mint', 1), ('Mango', 2)) as f(name, ord) where p.sku in ('BULK-1', 'BULK-700', 'BULK-1350')",
+  );
+
   // The main shopper's account (created by the admin UI later in the test for a second account).
   await sql("select public.create_customer('Main Street Market', $1, 'PW4C')", [codeHash(MAIN_CODE)]);
 }
@@ -188,9 +196,20 @@ async function main() {
   await page.getByRole("heading", { name: "Spring Water 24 × 16.9 oz" }).waitFor();
   assert.equal(await page.getByText("Hidden Draft Product").count(), 0, "unpublished products must not show");
   assert.equal(await page.getByText(/^catalog$/i).count(), 1, "the word CATALOG appears exactly once");
+  await page.getByText(/1359 products · page 1 of 29/).waitFor();
+  assert.equal(await page.locator("article").count(), 48, "one page of products at a time");
   await page.screenshot({ path: join(shots, "01-catalog-mobile.png"), fullPage: true });
-  step("catalog lists only published products");
+  await page.getByRole("link", { name: "Next →" }).click();
+  await page.waitForURL(/page=2/);
+  await page.getByText(/page 2 of 29/).waitFor();
+  await page.goto(`${APP}/?page=29`);
+  await page.getByRole("heading", { name: "Bulk Item 1350" }).waitFor();
+  await page.locator("article", { has: page.getByRole("heading", { name: "Bulk Item 1350" }) }).getByLabel("Flavor").waitFor();
+  await page.goto(`${APP}/?q=bulk%20item%2007`);
+  await page.getByText(/^\d+ results for/).waitFor();
+  step("catalog lists only published products; 1,359 products load in pages of 48 (flavors included)");
 
+  await page.goto(APP);
   await page.getByRole("combobox", { name: "Categories" }).selectOption("Snacks");
   await page.waitForURL(/c=Snacks/);
   await page.getByRole("heading", { name: /Kettle Chips/ }).waitFor();
@@ -354,7 +373,13 @@ async function main() {
 
   // ---- Product management with image upload
   await admin.goto(`${APP}/admin/products`);
+  await admin.getByText(/1360 products · page 1 of 28/).waitFor();
   await admin.screenshot({ path: join(shots, "08-admin-products.png"), fullPage: true });
+  const exported = await admin.request.get(`${APP}/admin/products/export`);
+  assert.equal(exported.status(), 200);
+  const exportText = await exported.text();
+  assert.equal(exportText.trim().split("\r\n").length - 1, 1360, "export includes every product, past 1,000 rows");
+  assert.match(exportText, /Bulk Item 0700,17\.00,BULK-700,THCA,Mint; Mango/);
   await admin.getByRole("link", { name: "Add product" }).click();
   await admin.getByLabel("Product name").fill("Energy Drink 24 × 8.4 oz");
   await admin.getByLabel(/Selling price/).fill("32.50");
@@ -395,7 +420,7 @@ async function main() {
   // ---- Desktop catalog screenshot
   const desk = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await loginAs(desk, MAIN_CODE);
-  await desk.goto(APP);
+  await desk.goto(`${APP}/?q=Energy%20Drink`);
   await desk.getByRole("heading", { name: /Energy Drink/ }).waitFor();
   await desk.screenshot({ path: join(shots, "11-catalog-desktop.png"), fullPage: true });
   await desk.goto(`${APP}/p/${created.id}`);
