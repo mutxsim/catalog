@@ -10,13 +10,14 @@
  * Screenshots go to E2E_SCREENSHOTS (default: tests/e2e/screenshots).
  */
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { chromium } from "playwright-core";
 import sharp from "sharp";
 import { PDFDocument } from "pdf-lib";
+import { createHash } from "node:crypto";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SB = "http://127.0.0.1:54321";
@@ -33,6 +34,7 @@ export const E2E_ENV = {
   WHATSAPP_PHONE_NUMBER_ID: "1234567890",
   WHATSAPP_GRAPH_URL: `${SB}/graph`,
   STORE_TIMEZONE: "America/New_York",
+  INSECURE_COOKIES: "1", // plain-HTTP test server
 };
 
 const procs = [];
@@ -61,6 +63,17 @@ const sql = async (q, params) => {
   return r.json();
 };
 const step = (s) => console.log(`  ✓ ${s}`);
+const codeHash = (c) => createHash("sha256").update(`access-code:${c.toUpperCase().replace(/[^A-Z0-9]/g, "")}`).digest("hex");
+const MAIN_CODE = "K7QM-2XTR-9HBD-PW4C";
+// What the hosting platform would add; lets the test check IP and location capture.
+const SHOPPER_HEADERS = { "x-forwarded-for": "203.0.113.10", "x-vercel-ip-city": "Philadelphia", "x-vercel-ip-country-region": "PA", "x-vercel-ip-country": "US" };
+const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1";
+async function loginAs(page, code) {
+  await page.goto(`${APP}/login`);
+  await page.getByLabel("Access Code").fill(code);
+  await page.getByRole("button", { name: "Login" }).click();
+  await page.waitForURL((u) => u.pathname === "/");
+}
 
 async function productImage(hue, shape) {
   const bg = `hsl(${hue} 25% 92%)`;
@@ -106,19 +119,25 @@ async function seed() {
   }
   await sql("insert into public.products (name, price_cents, published, sort_order) values ('Hidden Draft Product', 100, false, 999)");
 
-  // One product sold in seven flavors (7 > 6, so the flavor dropdown also shows).
-  const flavors = [["Berry", 0], ["Lemon Lime", 60], ["Grape", 280], ["Orange", 30], ["Mango", 45], ["Peach", 20], ["Watermelon", 350]];
-  let i = 0;
-  for (const [flavor, hue] of flavors) {
-    const [{ id }] = await sql(
-      "insert into public.products (name, price_cents, sku, category, published, sort_order, group_name, variant_name, description) values ($1, $2, $3, 'Beverages', true, $4, 'Energy Shot 2 oz, 12 ct', $5, $6) returning id",
-      ["Energy Shot 2 oz, 12 ct", flavor === "Grape" ? 2650 : 2400, `ES-${flavor.slice(0, 3).toUpperCase()}`, 15 + i, flavor, "Twelve 2 oz shots per case."],
-    );
-    const path = `products/${id}/seed.png`;
-    await fetch(`${SB}/__test/upload?key=${encodeURIComponent(`product-images/${path}`)}`, { method: "POST", headers: { "content-type": "image/png" }, body: await productImage(hue, "bottle") });
-    await sql("update public.products set image_path = $1 where id = $2", [path, id]);
-    i++;
+  // One product with seven flavors (some with their own photo).
+  const [{ id: shotId }] = await sql(
+    "insert into public.products (name, price_cents, sku, category, published, sort_order, description) values ('Energy Shot 2 oz, 12 ct', 2400, 'ES-12', 'Beverages', true, 15, 'Twelve 2 oz shots per case.') returning id",
+  );
+  const shotPath = `products/${shotId}/seed.png`;
+  await fetch(`${SB}/__test/upload?key=${encodeURIComponent(`product-images/${shotPath}`)}`, { method: "POST", headers: { "content-type": "image/png" }, body: await productImage(25, "bottle") });
+  await sql("update public.products set image_path = $1 where id = $2", [shotPath, shotId]);
+  const flavors = [["Berry", null], ["Lemon Lime", null], ["Grape", 280], ["Orange", null], ["Mango", null], ["Peach", null], ["Watermelon", 350]];
+  for (const [k, [flavor, hue]] of flavors.entries()) {
+    let image = null;
+    if (hue !== null) {
+      image = `products/${shotId}/flavors/${flavor}.png`;
+      await fetch(`${SB}/__test/upload?key=${encodeURIComponent(`product-images/${image}`)}`, { method: "POST", headers: { "content-type": "image/png" }, body: await productImage(hue, "can") });
+    }
+    await sql("insert into public.product_flavors (product_id, name, image_path, sort_order) values ($1, $2, $3, $4)", [shotId, flavor, image, (k + 1) * 10]);
   }
+
+  // The main shopper's account (created by the admin UI later in the test for a second account).
+  await sql("select public.create_customer('Main Street Market', $1, 'PW4C')", [codeHash(MAIN_CODE)]);
 }
 
 async function main() {
@@ -135,14 +154,40 @@ async function main() {
     headless: true,
   });
   const failures = [];
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, extraHTTPHeaders: SHOPPER_HEADERS, userAgent: IPHONE_UA });
   page.on("pageerror", (e) => failures.push(`page error: ${e.message}`));
   page.on("console", (m) => m.type() === "error" && !/favicon|status of (404|409)/.test(m.text()) && failures.push(`console: ${m.text()}`));
+
+  // ---- Access-code login protects every customer page and API
+  const anonPage = await fetch(`${APP}/`, { redirect: "manual" });
+  assert.equal(anonPage.status, 307);
+  assert.match(anonPage.headers.get("location") ?? "", /\/login/);
+  for (const path of ["/cart", "/checkout", "/p/00000000-0000-4000-8000-000000000000"]) {
+    assert.match((await fetch(`${APP}${path}`, { redirect: "manual" })).headers.get("location") ?? "", /\/login/, `${path} needs login`);
+  }
+  // A forged cookie gets nothing either.
+  const forged = await fetch(`${APP}/`, { redirect: "manual", headers: { cookie: "catalog_session=" + "x".repeat(43) } });
+  assert.match(forged.headers.get("location") ?? "", /\/login/);
+  assert.equal((await fetch(`${APP}/api/quote`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"items":[]}' })).status, 401);
+  assert.equal((await fetch(`${APP}/api/orders`, { method: "POST", headers: { "content-type": "application/json", origin: APP }, body: "{}" })).status, 401);
+
+  await page.goto(APP);
+  await page.waitForURL(/\/login/);
+  assert.equal(await page.getByText(/^catalog$/i).count(), 1, "CATALOG appears once on the login screen");
+  await page.getByLabel("Access Code").fill("ABCD-EFGH-JKMN-PQRS");
+  await page.getByRole("button", { name: "Login" }).click();
+  await page.getByText(/isn't valid/).waitFor();
+  await page.screenshot({ path: join(shots, "00-login-mobile.png") });
+  await page.getByLabel("Access Code").fill(MAIN_CODE.toLowerCase().replace(/-/g, " ")); // forgiving input
+  await page.getByRole("button", { name: "Login" }).click();
+  await page.waitForURL((u) => u.pathname === "/");
+  step("catalog, product, cart, checkout and APIs require a valid access code; code-only login works");
 
   // ---- Catalog
   await page.goto(APP);
   await page.getByRole("heading", { name: "Spring Water 24 × 16.9 oz" }).waitFor();
   assert.equal(await page.getByText("Hidden Draft Product").count(), 0, "unpublished products must not show");
+  assert.equal(await page.getByText(/^catalog$/i).count(), 1, "the word CATALOG appears exactly once");
   await page.screenshot({ path: join(shots, "01-catalog-mobile.png"), fullPage: true });
   step("catalog lists only published products");
 
@@ -223,7 +268,10 @@ async function main() {
   assert.equal(pdf.getTitle(), `Invoice ${order.invoice_number}`);
   assert.equal((await fetch(`${APP}/api/invoice/${orderId}?t=wrong`)).status, 404);
   assert.equal((await fetch(`${APP}/api/invoice/${orderId}`)).status, 404);
-  assert.equal((await fetch(`${APP}/order/${orderId}`)).status, 404);
+  // Not signed in → login screen; signed in but without the order's token → not found.
+  assert.match((await fetch(`${APP}/order/${orderId}`, { redirect: "manual" })).headers.get("location") ?? "", /\/login/);
+  const noToken = await page.goto(`${APP}/order/${orderId}`);
+  assert.equal(noToken.status(), 404);
   step("invoice downloads with the private token; guessing the order fails");
 
   // ---- WhatsApp: same PDF uploaded and sent as a document with the summary
@@ -250,8 +298,9 @@ async function main() {
   const dupKey = crypto.randomUUID();
   const productId = items[0].product_id;
   const body = (total) => JSON.stringify({ businessName: "Dup Test", items: [{ productId, quantity: 1 }], expectedTotalCents: total, idempotencyKey: dupKey });
-  const q = await (await fetch(`${APP}/api/quote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ items: [{ productId, quantity: 1 }] }) })).json();
-  const headers = { "content-type": "application/json", origin: APP };
+  const sessionCookie = (await page.context().cookies()).map((c) => `${c.name}=${c.value}`).join("; ");
+  const q = await (await fetch(`${APP}/api/quote`, { method: "POST", headers: { "content-type": "application/json", cookie: sessionCookie }, body: JSON.stringify({ items: [{ productId, quantity: 1 }] }) })).json();
+  const headers = { "content-type": "application/json", origin: APP, cookie: sessionCookie };
   const [r1, r2] = await Promise.all([
     fetch(`${APP}/api/orders`, { method: "POST", headers, body: body(q.quote.total_cents) }),
     fetch(`${APP}/api/orders`, { method: "POST", headers, body: body(q.quote.total_cents) }),
@@ -345,49 +394,193 @@ async function main() {
 
   // ---- Desktop catalog screenshot
   const desk = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await loginAs(desk, MAIN_CODE);
   await desk.goto(APP);
   await desk.getByRole("heading", { name: /Energy Drink/ }).waitFor();
   await desk.screenshot({ path: join(shots, "11-catalog-desktop.png"), fullPage: true });
   await desk.goto(`${APP}/p/${created.id}`);
   await desk.screenshot({ path: join(shots, "12-product-desktop.png") });
 
-  // ---- Flavors (separate shopper so the main cart above is untouched)
-  const shopper = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  // ---- Admin: manage flavors on a product (add, rename, remove, reorder-free save)
+  const [{ id: shotId }] = await sql("select id from public.products where sku = 'ES-12'");
+  await admin.goto(`${APP}/admin/products/${shotId}`);
+  const flavorList = admin.getByRole("list", { name: "Flavors" });
+  await flavorList.waitFor();
+  assert.equal(await flavorList.getByRole("listitem").count(), 7);
+  await admin.getByLabel("New flavor name").fill("Kiwi");
+  await admin.getByRole("button", { name: "Add flavor" }).click();
+  await admin.getByLabel("New flavor name").fill("kiwi"); // duplicate (case-insensitive) is refused
+  await admin.getByRole("button", { name: "Add flavor" }).click();
+  await admin.getByText(/already in the list/).waitFor();
+  await admin.getByLabel("New flavor name").fill("");
+  await flavorList.getByRole("textbox", { name: "Flavor name" }).first().fill("Mixed Berry");
+  await admin.getByRole("button", { name: "Remove Orange" }).click();
+  await admin.screenshot({ path: join(shots, "15-admin-flavors.png"), fullPage: true });
+  await admin.getByRole("button", { name: "Save changes" }).click();
+  await admin.waitForURL(/\/admin\/products\?saved=/);
+  const flavorNames = (await sql("select name from public.product_flavors where product_id = $1 order by sort_order", [shotId])).map((f) => f.name);
+  assert.deepEqual(flavorNames, ["Mixed Berry", "Lemon Lime", "Grape", "Mango", "Peach", "Watermelon", "Kiwi"]);
+  const [{ img: grapeImg }] = await sql("select image_path as img from public.product_flavors where product_id = $1 and name = 'Grape'", [shotId]);
+  assert.ok(grapeImg, "flavor images are kept on save");
+  step("admin adds, renames and removes flavors on one product (no duplicates, no extra products)");
+
+  // ---- Admin: create a customer and copy the generated code
+  await admin.goto(`${APP}/admin/customers`);
+  await admin.getByRole("button", { name: "Add Customer" }).click();
+  await admin.getByLabel("Customer or business name").fill("Main Street Market");
+  await admin.getByRole("button", { name: "Create & generate code" }).click();
+  await admin.getByText(/already exists/).waitFor(); // duplicate names refused
+  await admin.getByLabel("Customer or business name").fill("Flavor Test Shop");
+  await admin.getByRole("button", { name: "Create & generate code" }).click();
+  const codeEl = admin.getByTestId("access-code");
+  await codeEl.waitFor();
+  const flavorCode = (await codeEl.textContent()).trim();
+  assert.match(flavorCode, /^[2-9A-Z]{4}-[2-9A-Z]{4}-[2-9A-Z]{4}-[2-9A-Z]{4}$/);
+  await admin.getByRole("button", { name: "Copy Code" }).click();
+  await admin.screenshot({ path: join(shots, "16-admin-customer-created.png"), fullPage: true });
+  const [stored] = await sql("select c.id, c.active, k.code_hash from public.customers c join public.customer_codes k on k.customer_id = c.id where c.name = 'Flavor Test Shop'");
+  assert.equal(stored.active, true);
+  assert.equal(stored.code_hash, codeHash(flavorCode));
+  assert.ok(!JSON.stringify(await sql("select * from public.customer_codes")).includes(flavorCode.replace(/-/g, "")), "codes are stored hashed only");
+  step("admin creates a customer; a unique code is generated, shown once with Copy, stored only as a hash");
+
+  // ---- Shopper: code-only login, flavor dropdown, two flavors of one product
+  const shopperCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, extraHTTPHeaders: SHOPPER_HEADERS, userAgent: IPHONE_UA });
+  const shopper = await shopperCtx.newPage();
   shopper.on("pageerror", (e) => failures.push(`flavor page error: ${e.message}`));
-  await shopper.goto(`${APP}/?q=lemon`);
-  const group = shopper.locator("article", { has: shopper.getByRole("heading", { name: "Energy Shot 2 oz, 12 ct" }) });
-  await group.getByRole("button", { name: /Lemon Lime/, pressed: true }).waitFor();
-  assert.equal(await group.count(), 1, "the matching flavor group shows as one card, not one per flavor");
-  await group.getByRole("button", { name: "Grape" }).click();
-  await group.getByText("SKU ES-GRA").waitFor();
-  await group.getByText("$26.50").first().waitFor();
-  await group.getByRole("combobox").selectOption({ label: "Peach" });
-  await group.getByRole("button", { name: /Peach/, pressed: true }).waitFor();
-  await group.getByText("SKU ES-PEA").waitFor();
+  await loginAs(shopper, flavorCode);
+  await shopper.getByText("Flavor Test Shop").first().waitFor({ state: "attached" });
+  const shotCard = shopper.locator("article", { has: shopper.getByRole("heading", { name: "Energy Shot 2 oz, 12 ct" }) });
+  const flavorSelect = shotCard.getByLabel("Flavor");
+  const addBtn = shotCard.getByRole("button", { name: "Add to Cart" });
+  assert.equal(await addBtn.isDisabled(), true, "a flavor is required first");
+  const options = await flavorSelect.locator("option").allTextContents();
+  assert.deepEqual(options.slice(1), ["Mixed Berry", "Lemon Lime", "Grape", "Mango", "Peach", "Watermelon", "Kiwi"]);
+  assert.equal(await shopper.locator("article").filter({ hasText: "Energy Shot" }).count(), 1, "flavors are not separate products");
+  await flavorSelect.selectOption({ label: "Grape" });
+  await shotCard.getByText("Selected: Grape").waitFor();
+  const imgSrc = await shotCard.locator("img").first().getAttribute("src");
+  assert.match(imgSrc ?? "", /flavors%2FGrape|flavors\/Grape/, "flavor image shows when set");
   await shopper.screenshot({ path: join(shots, "13-flavors-mobile.png"), fullPage: true });
-  await group.getByRole("button", { name: "Add to Cart" }).click();
-  await shopper.getByRole("link", { name: /Cart, 1 item/ }).waitFor();
+  await shotCard.getByRole("button", { name: /Increase quantity/ }).click();
+  await addBtn.click();
+  await flavorSelect.selectOption({ label: "Peach" });
+  await shotCard.getByRole("button", { name: "Add to Cart" }).click();
+  await shopper.getByRole("link", { name: /Cart, 3 items/ }).waitFor();
+  // Search by flavor name finds the product.
+  await shopper.goto(`${APP}/?q=watermelon`);
+  await shopper.getByRole("heading", { name: "Energy Shot 2 oz, 12 ct" }).waitFor();
+  await shopper.goto(`${APP}/cart`);
+  await shopper.getByText("Flavor: Grape").waitFor();
+  await shopper.getByText("Flavor: Peach").waitFor();
+  assert.equal(await shopper.getByRole("listitem").filter({ hasText: "Energy Shot" }).count(), 2, "two flavors = two cart lines");
+  await shopper.screenshot({ path: join(shots, "17-cart-flavors-mobile.png"), fullPage: true });
+  step("Flavor dropdown lists only that product's flavors; selection required; two flavors become two cart lines");
+
   await shopper.goto(`${APP}/checkout`);
-  await shopper.getByText("Energy Shot 2 oz, 12 ct — Peach").waitFor();
-  await shopper.getByLabel("Store / Business Name").fill("Flavor Test Shop");
+  assert.equal(await shopper.getByLabel("Store / Business Name").inputValue(), "Flavor Test Shop", "business name prefilled from the account");
+  await shopper.getByText("Flavor: Grape").waitFor();
   await shopper.getByRole("button", { name: "Place Order" }).click();
   await shopper.waitForURL(/\/order\//);
-  const [flavorLine] = await sql(
-    "select i.name, i.sku, i.unit_price_cents from public.order_items i join public.orders o on o.id = i.order_id where o.business_name = 'Flavor Test Shop'",
-  );
-  assert.deepEqual(flavorLine, { name: "Energy Shot 2 oz, 12 ct — Peach", sku: "ES-PEA", unit_price_cents: 2400 });
-  // Detail page: choosing a flavor updates the page and the shareable URL.
-  const [{ id: berryId }] = await sql("select id from public.products where sku = 'ES-BER'");
-  await shopper.goto(`${APP}/p/${berryId}`);
-  await shopper.getByRole("button", { name: "Watermelon" }).click();
-  await shopper.getByText("SKU ES-WAT").waitFor();
-  const [{ id: watId }] = await sql("select id from public.products where sku = 'ES-WAT'");
-  assert.ok(shopper.url().endsWith(`/p/${watId}`));
-  const deskFlavor = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  await deskFlavor.goto(`${APP}/p/${berryId}`);
-  await deskFlavor.getByRole("button", { name: /Berry/, pressed: true }).waitFor();
-  await deskFlavor.screenshot({ path: join(shots, "14-flavor-detail-desktop.png") });
-  step("flavors: grouped card, chip + dropdown selection, search preselects, correct SKU/price, flavor named on the order");
+  await shopper.getByRole("heading", { name: "Order Placed Successfully" }).waitFor();
+  const invoiceSection = shopper.getByRole("region", { name: "Invoice items" });
+  assert.equal(await invoiceSection.locator("img").count(), 2, "each invoice line shows its image");
+  await shopper.screenshot({ path: join(shots, "18-confirmation-images-mobile.png"), fullPage: true });
+  const flavorOrderUrl = new URL(shopper.url());
+  const [flavorOrder] = await sql("select id, customer_id from public.orders where business_name = 'Flavor Test Shop'");
+  assert.equal(flavorOrder.customer_id, stored.id, "order linked to the logged-in customer");
+  const lines = await sql("select name, flavor_name, quantity, image_path from public.order_items where order_id = $1 order by position", [flavorOrder.id]);
+  assert.deepEqual(lines.map((l) => [l.flavor_name, l.quantity]), [["Grape", 2], ["Peach", 1]]);
+  assert.match(lines[0].image_path, /flavors\/Grape/, "flavor-specific image snapshotted");
+  assert.match(lines[1].image_path, /seed\.png$/, "no flavor image → product image");
+  const flavorPdf = new Uint8Array(await (await fetch(`${APP}/api/invoice/${flavorOrder.id}?t=${flavorOrderUrl.searchParams.get("t")}`)).arrayBuffer());
+  const imageObjects = (Buffer.from(flavorPdf).toString("latin1").match(/\/Subtype\s*\/Image/g) ?? []).length;
+  assert.ok(imageObjects >= 2, `PDF embeds product images (found ${imageObjects})`);
+  writeFileSync(join(shots, "invoice-with-images.pdf"), flavorPdf);
+  // Changing flavors later doesn't touch the order or its stored invoice.
+  await sql("update public.product_flavors set name = 'Grape Soda' where product_id = $1 and name = 'Grape'", [shotId]);
+  const flavorPdfAgain = new Uint8Array(await (await fetch(`${APP}/api/invoice/${flavorOrder.id}?t=${flavorOrderUrl.searchParams.get("t")}`)).arrayBuffer());
+  assert.deepEqual(Buffer.from(flavorPdfAgain), Buffer.from(flavorPdf));
+  const [{ flavor_name: kept }] = await sql("select flavor_name from public.order_items where order_id = $1 order by position limit 1", [flavorOrder.id]);
+  assert.equal(kept, "Grape");
+  step("checkout, confirmation, PDF invoice and WhatsApp-ready order all carry flavor + product images; history unchanged by later edits");
+
+  // ---- Logout ends the session
+  await shopper.getByRole("button", { name: "Log out" }).click();
+  await shopper.waitForURL(/\/login\?reason=logout/);
+  await shopper.goto(`${APP}/cart`);
+  await shopper.waitForURL(/\/login/);
+
+  // ---- Regenerate: old code + old sessions stop working immediately
+  const shopper2 = await browser.newPage({ extraHTTPHeaders: SHOPPER_HEADERS });
+  await loginAs(shopper2, flavorCode);
+  await admin.goto(`${APP}/admin/customers/${stored.id}`);
+  admin.once("dialog", (d) => d.accept());
+  await admin.getByRole("button", { name: "Regenerate code" }).click();
+  const newCodeEl = admin.getByTestId("access-code");
+  await newCodeEl.waitFor();
+  const newCode = (await newCodeEl.textContent()).trim();
+  assert.notEqual(newCode, flavorCode);
+  await shopper2.goto(`${APP}/cart`);
+  await shopper2.waitForURL(/\/login\?reason=ended/);
+  await shopper2.getByLabel("Access Code").fill(flavorCode);
+  await shopper2.getByRole("button", { name: "Login" }).click();
+  await shopper2.getByText(/no longer valid/).waitFor();
+  await loginAs(shopper2, newCode);
+  step("regenerating a code revokes the old code and signs out existing sessions");
+
+  // ---- Deactivate: immediate loss of access; reactivate restores it
+  await admin.reload();
+  admin.once("dialog", (d) => d.accept());
+  await admin.getByRole("button", { name: "Deactivate" }).click();
+  await admin.getByRole("button", { name: "Activate" }).waitFor();
+  await shopper2.goto(`${APP}/`);
+  await shopper2.waitForURL(/\/login/);
+  await shopper2.getByLabel("Access Code").fill(newCode);
+  await shopper2.getByRole("button", { name: "Login" }).click();
+  await shopper2.getByText(/inactive/).waitFor();
+  await admin.getByRole("button", { name: "Activate" }).click();
+  await admin.getByRole("button", { name: "Deactivate" }).waitFor();
+  await loginAs(shopper2, newCode);
+  step("deactivation blocks the customer immediately; reactivation restores access");
+
+  // ---- Customer login history
+  await admin.reload();
+  const history = admin.getByRole("table").last();
+  await history.getByText("Logged out").first().waitFor();
+  await history.getByText("Ended: code regenerated").first().waitFor();
+  await history.getByText("Ended: account deactivated").first().waitFor();
+  await history.getByText("Failed · Revoked code").first().waitFor();
+  await history.getByText("Philadelphia, PA, US").first().waitFor();
+  await history.getByText("203.0.113.10").first().waitFor();
+  await history.getByText(/Mobile · Safari 17\.4 · iOS/).first().waitFor();
+  await admin.screenshot({ path: join(shots, "19-admin-customer-detail.png"), fullPage: true });
+  step("customer page shows login history with session outcomes, IP, approximate location and device");
+
+  // ---- Login Activity dashboard
+  await admin.goto(`${APP}/admin/activity`);
+  const [{ n: successes }] = await sql("select count(*)::int as n from public.login_events where success");
+  const [{ n: fails }] = await sql("select count(*)::int as n from public.login_events where not success");
+  await admin.getByText("Successful logins").locator("..").getByText(String(successes), { exact: true }).waitFor();
+  await admin.getByText("Failed attempts").locator("..").getByText(String(fails), { exact: true }).waitFor();
+  await admin.screenshot({ path: join(shots, "20-admin-activity.png"), fullPage: true });
+  await admin.getByRole("link", { name: "Failed", exact: true }).click();
+  await admin.waitForURL(/result=failed/);
+  assert.equal(await admin.getByText("Success", { exact: true }).count(), 0, "failed filter shows failures only");
+  await admin.getByText("Failed · Invalid code").first().waitFor();
+  await admin.getByLabel("Customer").fill("Flavor Test");
+  await admin.getByRole("button", { name: "Filter" }).click();
+  await admin.waitForURL(/q=Flavor/);
+  await admin.getByText("Failed · Revoked code").first().waitFor();
+  assert.equal(await admin.getByText("Failed · Invalid code").count(), 0, "customer filter applied");
+  await admin.getByRole("link", { name: "Flavor Test Shop" }).first().click();
+  await admin.waitForURL(new RegExp(`/admin/customers/${stored.id}`));
+  // Date filter far in the past → nothing.
+  await admin.goto(`${APP}/admin/activity?from=2000-01-01&to=2000-01-02`);
+  await admin.getByText("No login activity matches these filters.").waitFor();
+  const failedRows = await sql("select * from public.login_events where not success");
+  assert.ok(!JSON.stringify(failedRows).includes("ABCDEFGHJKMNPQRS"), "submitted codes are never stored");
+  step("Login Activity: real totals, success/failed filter, customer search, date range, link to account; codes never logged");
 
   await browser.close();
   if (failures.length) throw new Error(`Browser errors:\n${failures.join("\n")}`);

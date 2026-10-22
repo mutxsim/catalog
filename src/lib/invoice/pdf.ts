@@ -10,6 +10,8 @@ export type InvoiceInput = {
   >;
   items: OrderItem[];
   logo?: { bytes: Uint8Array; mime: "image/png" | "image/jpeg" } | null;
+  /** Thumbnail per item (same order as `items`); null draws a neutral placeholder. */
+  itemImages?: ({ bytes: Uint8Array; mime: "image/png" | "image/jpeg" } | null)[];
   timeZone?: string;
 };
 
@@ -23,8 +25,10 @@ const INK = rgb(0.09, 0.09, 0.1);
 const MUTED = rgb(0.42, 0.42, 0.45);
 const RULE = rgb(0.86, 0.86, 0.87);
 
+const THUMB = 36;
 const COLS = {
-  item: { x: M, w: 228 },
+  thumb: { x: M },
+  item: { x: M + THUMB + 8, w: 228 - THUMB - 8 },
   sku: { x: M + 236, w: 82 },
   qty: { right: M + 366 },
   unit: { right: M + 442 },
@@ -133,7 +137,7 @@ export async function renderInvoicePdf(input: InvoiceInput): Promise<Uint8Array>
 
   const tableHeader = () => {
     const size = 8;
-    text("ITEM", COLS.item.x, y, size, bold, MUTED);
+    text("ITEM", COLS.thumb.x, y, size, bold, MUTED);
     text("SKU", COLS.sku.x, y, size, bold, MUTED);
     textRight("QTY", COLS.qty.right, y, size, bold, MUTED);
     textRight("UNIT PRICE", COLS.unit.right, y, size, bold, MUTED);
@@ -207,18 +211,47 @@ export async function renderInvoicePdf(input: InvoiceInput): Promise<Uint8Array>
 
   // ---- Items --------------------------------------------------------------
   tableHeader();
-  for (const item of items) {
+  const embedded = new Map<Uint8Array, PDFImage | null>();
+  const thumbFor = async (idx: number): Promise<PDFImage | null> => {
+    const img = input.itemImages?.[idx];
+    if (!img) return null;
+    if (!embedded.has(img.bytes)) {
+      try {
+        embedded.set(img.bytes, img.mime === "image/png" ? await doc.embedPng(img.bytes) : await doc.embedJpg(img.bytes));
+      } catch {
+        embedded.set(img.bytes, null); // unreadable image → placeholder, never a broken invoice
+      }
+    }
+    return embedded.get(img.bytes) ?? null;
+  };
+
+  for (const [idx, item] of items.entries()) {
     const nameLinesItem = wrap(clean(item.name), font, 10, COLS.item.w);
+    const flavorLines = item.flavor_name ? wrap(clean(`Flavor: ${item.flavor_name}`), font, 9, COLS.item.w) : [];
     const skuLines = item.sku ? wrap(clean(item.sku), font, 9, COLS.sku.w) : [];
-    const rows = Math.max(nameLinesItem.length, skuLines.length, 1);
-    const rowH = rows * 13 + 10;
-    if (y - rowH < M + 40) newPage(true);
+    const textH = Math.max(nameLinesItem.length * 13 + flavorLines.length * 12, skuLines.length * 13, 13);
+    const contentH = Math.max(textH, THUMB - 4);
+    if (y - contentH - 20 < M + 40) newPage(true);
+
+    // Thumbnail (top-aligned with the first text line), scaled to fit without distortion.
+    const thumbTop = y + 9;
+    const thumb = await thumbFor(idx);
+    if (thumb) {
+      const scale = Math.min(THUMB / thumb.width, THUMB / thumb.height);
+      const w = thumb.width * scale;
+      const h = thumb.height * scale;
+      page.drawImage(thumb, { x: COLS.thumb.x + (THUMB - w) / 2, y: thumbTop - THUMB + (THUMB - h) / 2, width: w, height: h });
+    } else {
+      page.drawRectangle({ x: COLS.thumb.x, y: thumbTop - THUMB, width: THUMB, height: THUMB, color: rgb(0.95, 0.95, 0.95), borderColor: RULE, borderWidth: 0.5 });
+    }
+
     nameLinesItem.forEach((l, i) => text(l, COLS.item.x, y - i * 13, 10));
+    flavorLines.forEach((l, i) => text(l, COLS.item.x, y - nameLinesItem.length * 13 - i * 12, 9, font, MUTED));
     skuLines.forEach((l, i) => text(l, COLS.sku.x, y - i * 13, 9, font, MUTED));
     textRight(String(item.quantity), COLS.qty.right, y, 10);
     textRight(money(item.unit_price_cents), COLS.unit.right, y, 10);
     textRight(money(item.line_total_cents), COLS.total.right, y, 10);
-    y -= rowH - 10;
+    y -= contentH;
     y -= 6;
     rule(y + 2);
     y -= 12;

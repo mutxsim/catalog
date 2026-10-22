@@ -23,8 +23,6 @@ export const productSchema = z.object({
     }),
   sku: optionalText(64).refine((v) => v === null || /^[\w.\-/ #]+$/.test(v), "SKU can use letters, numbers, spaces and . - / # _"),
   category: optionalText(80),
-  group_name: optionalText(200),
-  variant_name: optionalText(120),
   description: optionalText(5000),
   published: z.boolean(),
   sort_order: z.coerce.number().int().min(-1_000_000).max(1_000_000),
@@ -33,7 +31,7 @@ export const productSchema = z.object({
 export const orderRequestSchema = z.object({
   businessName: z.string().trim().min(1, "Enter your store or business name.").max(120, "Business name is too long."),
   items: z
-    .array(z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(9999) }))
+    .array(z.object({ productId: z.uuid(), flavorId: z.uuid().nullable().optional(), quantity: z.number().int().min(1).max(9999) }))
     .min(1, "Your cart is empty.")
     .max(200),
   expectedTotalCents: z.number().int().min(0),
@@ -42,7 +40,7 @@ export const orderRequestSchema = z.object({
 
 export const quoteRequestSchema = z.object({
   items: z
-    .array(z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(9999) }))
+    .array(z.object({ productId: z.uuid(), flavorId: z.uuid().nullable().optional(), quantity: z.number().int().min(1).max(9999) }))
     .max(200),
 });
 
@@ -65,8 +63,12 @@ export const settingsSchema = z.object({
   invoice_footer: z.string().trim().max(500),
   pickup_instructions: z.string().trim().max(1000),
   retention_years: z.coerce.number().int().min(1).max(50),
+  login_retention_days: z.coerce.number().int().min(30, "Keep login records at least 30 days.").max(3650),
 });
 
 export function firstError(error: z.ZodError) {
   return error.issues[0]?.message ?? "Please check the form.";
 }
+
+export const flavorNameSchema = z.string().trim().min(1, "Flavor names can't be empty.").max(120, "Flavor names must be 120 characters or fewer.");
+export const customerNameSchema = z.string().trim().min(1, "Enter the customer's business or account name.").max(120, "Name is too long.");

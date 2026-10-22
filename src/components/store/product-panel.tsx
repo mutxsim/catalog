@@ -2,61 +2,47 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
-import { lineName, variantLabel } from "@/lib/catalog";
+import { useId, useState } from "react";
 import { formatMoney } from "@/lib/money";
 import { publicStorageUrl } from "@/lib/public-url";
-import type { Product } from "@/lib/types";
+import type { ProductWithFlavors } from "@/lib/types";
 import { AddToCart } from "./add-to-cart";
 
-const DROPDOWN_AT = 6;
-
 /**
- * A product card (grid) or full product view (detail page). When a product has
- * several flavors, the selected flavor drives the image, SKU, price and what
- * is added to the cart.
+ * A product card (grid) or full product view (detail page). Products with
+ * flavors get a "Flavor" dropdown; a flavor must be chosen before adding to
+ * the cart. A single flavor is selected automatically.
  */
 export function ProductPanel({
-  title,
-  category,
-  variants,
+  product,
   currency,
-  initialId,
+  initialFlavorId,
   layout,
   priority,
 }: {
-  title: string;
-  category: string | null;
-  variants: Product[];
+  product: ProductWithFlavors;
   currency: string;
-  initialId?: string;
+  initialFlavorId?: string;
   layout: "card" | "detail";
   priority?: boolean;
 }) {
-  const [selectedId, setSelectedId] = useState(() => (variants.some((v) => v.id === initialId) ? initialId! : variants[0].id));
-  const selected = variants.find((v) => v.id === selectedId) ?? variants[0];
-  const hasFlavors = variants.length > 1 || Boolean(selected.variant_name);
-  const image =
-    publicStorageUrl("product-images", selected.image_path) ??
-    publicStorageUrl("product-images", variants.find((v) => v.image_path)?.image_path);
-  const description = selected.description ?? variants.find((v) => v.description)?.description ?? null;
+  const { flavors } = product;
+  const selectId = useId();
+  const [flavorId, setFlavorId] = useState<string>(() => {
+    if (flavors.length === 1) return flavors[0].id;
+    return flavors.some((f) => f.id === initialFlavorId) ? initialFlavorId! : "";
+  });
+  const flavor = flavors.find((f) => f.id === flavorId) ?? null;
+  const needsFlavor = flavors.length > 0 && !flavor;
   const detail = layout === "detail";
-
-  const choose = (id: string) => {
-    setSelectedId(id);
-    if (detail) {
-      try {
-        window.history.replaceState(null, "", `/p/${id}`);
-      } catch {}
-    }
-  };
+  const image = publicStorageUrl("product-images", flavor?.image_path ?? product.image_path);
 
   const imageBox = (
     <div className={`relative overflow-hidden bg-subtle ${detail ? "aspect-square rounded-3xl border border-line" : "aspect-[5/4]"}`}>
       {image ? (
         <Image
           src={image}
-          alt={hasFlavors ? `${title} — ${variantLabel(selected)}` : title}
+          alt={flavor ? `${product.name} — ${flavor.name}` : product.name}
           fill
           priority={priority}
           sizes={detail ? "(min-width: 768px) 480px, 100vw" : "(min-width: 1024px) 380px, (min-width: 640px) 50vw, 100vw"}
@@ -68,75 +54,77 @@ export function ProductPanel({
     </div>
   );
 
-  const titleEl = detail ? (
-    <h1 className="mt-1.5 text-2xl font-bold leading-tight tracking-tight sm:text-3xl">{title}</h1>
-  ) : (
-    <h2 className="mt-1.5 text-xl font-bold leading-snug tracking-tight">
-      <Link href={`/p/${selected.id}`} className="hover:underline hover:underline-offset-4">{title}</Link>
-    </h2>
-  );
-
   const info = (
     <div className={detail ? "md:pt-2" : "flex flex-1 flex-col p-5"}>
-      {category && <p className="text-xs font-semibold uppercase tracking-[0.22em] text-accent">{category}</p>}
-      {titleEl}
-      {!hasFlavors && <p className="tabular mt-2 text-lg">{formatMoney(selected.price_cents, currency)}</p>}
-      {selected.sku && <p className="mt-0.5 text-sm text-muted">SKU {selected.sku}</p>}
+      {product.category && <p className="text-xs font-semibold uppercase tracking-[0.22em] text-accent">{product.category}</p>}
+      {detail ? (
+        <h1 className="mt-1.5 text-2xl font-bold leading-tight tracking-tight sm:text-3xl">{product.name}</h1>
+      ) : (
+        <h2 className="mt-1.5 text-xl font-bold leading-snug tracking-tight">
+          <Link href={`/p/${product.id}`} className="hover:underline hover:underline-offset-4">{product.name}</Link>
+        </h2>
+      )}
+      <p className="tabular mt-2 text-lg">{formatMoney(product.price_cents, currency)}</p>
+      {product.sku && <p className="mt-0.5 text-sm text-muted">SKU {product.sku}</p>}
 
-      {hasFlavors && (
-        <>
-          <div className="mt-4 rounded-2xl bg-subtle px-4 py-3" aria-live="polite">
-            <p className="text-[17px] font-semibold leading-snug">{variantLabel(selected)}</p>
-            <p className="tabular text-[15px] font-medium text-highlight">{formatMoney(selected.price_cents, currency)}</p>
-          </div>
-
-          {variants.length > 1 && (
-            <div className="mt-3 rounded-2xl border border-line p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-accent">Flavors</p>
-              <div role="group" aria-label={`Flavors of ${title}`} className="mt-3 flex flex-wrap gap-2">
-                {variants.map((v) => {
-                  const on = v.id === selected.id;
-                  return (
-                    <button
-                      key={v.id}
-                      type="button"
-                      aria-pressed={on}
-                      onClick={() => choose(v.id)}
-                      className={`min-h-9 rounded-full px-3.5 py-1.5 text-sm transition-colors ${
-                        on ? "bg-accent-soft text-ink ring-1 ring-accent" : "bg-subtle text-ink/85 hover:text-ink"
-                      }`}
-                    >
-                      {variantLabel(v)}
-                      {on && <span aria-hidden> ✓</span>}
-                    </button>
-                  );
-                })}
-              </div>
-              {variants.length > DROPDOWN_AT && (
-                <select
-                  aria-label={`Select a flavor of ${title}`}
-                  value={selected.id}
-                  onChange={(e) => choose(e.target.value)}
-                  className="mt-3 h-11 w-full rounded-xl border border-line bg-card px-3 text-[15px] text-ink focus:border-accent focus:outline-none"
-                >
-                  {variants.map((v) => (
-                    <option key={v.id} value={v.id}>{variantLabel(v)}</option>
-                  ))}
-                </select>
-              )}
+      {flavors.length > 0 && (
+        <div className="mt-4">
+          <label htmlFor={selectId} className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.14em] text-accent">
+            Flavor
+          </label>
+          {flavors.length === 1 ? (
+            <p id={selectId} className="rounded-2xl bg-subtle px-4 py-3 text-[15px] font-semibold">{flavors[0].name}</p>
+          ) : (
+            <div className="relative">
+              <select
+                id={selectId}
+                value={flavorId}
+                onChange={(e) => setFlavorId(e.target.value)}
+                aria-describedby={needsFlavor ? `${selectId}-hint` : undefined}
+                className={`h-12 w-full appearance-none rounded-2xl border bg-subtle pl-4 pr-11 text-[15px] focus:border-accent focus:outline-none ${
+                  flavor ? "border-accent/60 font-semibold text-ink" : "border-line text-muted"
+                }`}
+              >
+                <option value="" disabled>
+                  Select a flavor ({flavors.length})
+                </option>
+                {flavors.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              <svg className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-muted" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+                <path d="m6 9 6 6 6-6" />
+              </svg>
             </div>
           )}
-        </>
+          {flavor && flavors.length > 1 && (
+            <p className="mt-2 text-sm text-highlight" aria-live="polite">
+              Selected: <span className="font-semibold">{flavor.name}</span>
+            </p>
+          )}
+          {needsFlavor && (
+            <p id={`${selectId}-hint`} className="mt-2 text-sm text-muted">Choose a flavor to add this to your cart.</p>
+          )}
+        </div>
       )}
 
-      {description && (
-        <p className={`mt-4 whitespace-pre-line text-[15px] leading-relaxed text-ink/75 ${detail ? "" : "line-clamp-3"}`}>{description}</p>
+      {product.description && (
+        <p className={`mt-4 whitespace-pre-line text-[15px] leading-relaxed text-ink/75 ${detail ? "" : "line-clamp-3"}`}>{product.description}</p>
       )}
 
       <div className={detail ? "mt-6" : "mt-auto pt-5"}>
         <AddToCart
-          key={selected.id}
-          item={{ productId: selected.id, name: lineName(selected), priceCents: selected.price_cents, sku: selected.sku, imagePath: selected.image_path }}
+          key={flavorId || "none"}
+          disabled={needsFlavor}
+          item={{
+            productId: product.id,
+            flavorId: flavor?.id ?? null,
+            name: product.name,
+            flavorName: flavor?.name ?? null,
+            priceCents: product.price_cents,
+            sku: product.sku,
+            imagePath: flavor?.image_path ?? product.image_path,
+          }}
         />
       </div>
     </div>
@@ -152,7 +140,7 @@ export function ProductPanel({
   }
   return (
     <article className="flex h-full flex-col overflow-hidden rounded-3xl border border-line bg-card">
-      <Link href={`/p/${selected.id}`} tabIndex={-1} aria-hidden>
+      <Link href={`/p/${product.id}`} tabIndex={-1} aria-hidden>
         {imageBox}
       </Link>
       {info}

@@ -80,6 +80,9 @@ export function SettingsForm({ settings, logoUrl }: { settings: Settings; logoUr
         <Field id="retention_years" label="Keep order records for (years)">
           <input id="retention_years" name="retention_years" type="number" min={1} max={50} defaultValue={settings.retention_years} className={`${input} tabular max-w-32`} />
         </Field>
+        <Field id="login_retention_days" label="Keep login records for (days)" hint="Customer login activity older than this can be removed from Login Activity → Retention.">
+          <input id="login_retention_days" name="login_retention_days" type="number" min={30} max={3650} defaultValue={settings.login_retention_days ?? 365} className={`${input} tabular max-w-32`} />
+        </Field>
       </Section>
 
       <div className="flex items-center gap-3">

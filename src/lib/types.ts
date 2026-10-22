@@ -11,6 +11,7 @@ export type Settings = {
   invoice_footer: string;
   pickup_instructions: string;
   retention_years: number;
+  login_retention_days?: number;
 };
 
 export type Product = {
@@ -22,12 +23,21 @@ export type Product = {
   category: string | null;
   image_path: string | null;
   published: boolean;
-  /** Products sharing a group are shown as one card with flavor options. */
-  group_name: string | null;
-  /** Flavor / variety label within the group, e.g. "Mango". */
-  variant_name: string | null;
+  /** Legacy (0002) grouping fields — kept in the database, no longer used by the UI. */
+  group_name?: string | null;
+  variant_name?: string | null;
   sort_order: number;
 };
+
+export type Flavor = {
+  id: string;
+  product_id: string;
+  name: string;
+  image_path: string | null;
+  sort_order: number;
+};
+
+export type ProductWithFlavors = Product & { flavors: Flavor[] };
 
 export const ORDER_STATUSES = ["new", "preparing", "ready_for_pickup", "completed", "cancelled"] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -52,6 +62,7 @@ export type SellerSnapshot = {
 
 export type Order = {
   id: string;
+  customer_id?: string | null;
   order_number: string;
   invoice_number: string;
   access_token: string;
@@ -76,6 +87,8 @@ export type Order = {
 export type OrderItem = {
   position: number;
   name: string;
+  flavor_name?: string | null;
+  image_path?: string | null;
   sku: string | null;
   unit_price_cents: number;
   quantity: number;
@@ -84,7 +97,9 @@ export type OrderItem = {
 
 export type QuoteLine = {
   product_id: string;
+  flavor_id: string | null;
   name: string;
+  flavor_name: string | null;
   sku: string | null;
   image_path: string | null;
   unit_price_cents: number;
@@ -94,7 +109,7 @@ export type QuoteLine = {
 
 export type Quote = {
   lines: QuoteLine[];
-  unavailable: string[];
+  unavailable: { product_id: string; flavor_id: string | null; reason: "unavailable" | "flavor_required" | "flavor_unavailable" }[];
   currency: string;
   subtotal_cents: number;
   tax_enabled: boolean;

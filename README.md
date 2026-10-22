@@ -14,7 +14,7 @@ No branding is built in: business name, logo, address, currency, tax and invoice
 At [supabase.com](https://supabase.com) create a project (the free tier is fine).
 
 ### 2. Create the database
-In the Supabase dashboard open **SQL Editor**, paste the whole of `supabase/migrations/0001_init.sql`, and run it. Then do the same with `supabase/migrations/0002_flavors.sql` (adds flavors; safe to run on a database that already has products and orders). This creates the tables, pricing/order functions, row-level security and the three storage buckets (`product-images`, `branding` public; `invoices` private).
+In the Supabase dashboard open **SQL Editor**, paste the whole of `supabase/migrations/0001_init.sql`, and run it. Then do the same with `supabase/migrations/0002_flavors.sql` and `supabase/migrations/0003_flavors_customers_activity.sql`, in that order. Both only add things; existing products, orders and invoices are untouched. This creates the tables, pricing/order functions, row-level security and the three storage buckets (`product-images`, `branding` public; `invoices` private).
 
 Then in **Authentication → Sign In / Providers**, turn **off** "Allow new users to sign up". Only the admin account you create below should exist.
 
@@ -87,13 +87,36 @@ Admin → Settings shows which parts are configured.
 
 ---
 
-## Flavors / varieties
-To sell one product in several flavors, add each flavor as its own product (own price, SKU and photo) and give them the same **Product group**, with the flavor in **Flavor / variety** (Admin → Products → Add product). For example: group `Gummies 10ct`, flavors `Mango`, `Watermelon`, `Blue Razz`.
+## Flavors
+Open a product in **Admin → Products** and use the **Flavors** box: type a name and press **Add flavor**, edit names in place, use ▲▼ to reorder, **Remove** to delete one, and tap the square to give a flavor its own photo (otherwise the product photo is used). Everything is saved with **Save changes**. Price and SKU come from the product; flavors are not separate products.
 
-The catalog then shows one card for the group with flavor chips (and a flavor dropdown when there are more than six). The selected flavor sets the photo, SKU, price and what goes in the cart. The cart, invoice and WhatsApp message name the flavor, e.g. "Gummies 10ct — Mango". Searching for a flavor shows its group with that flavor selected. Products without a group show as before.
+Customers see a **Flavor** dropdown on that product and must choose one before **Add to Cart** (a single flavor is selected automatically). The same product in two flavors becomes two cart lines. Cart, checkout, the invoice and the WhatsApp message all show the flavor. Search also matches flavor names. Renaming or removing a flavor later never changes past orders — each order line stores the flavor name and image it was sold with.
+
+## Customer access codes
+The catalog is private: customers enter an **Access Code** at `/login` — no name, email or password.
+
+1. **Admin → Customers → Add Customer**, enter the business name. A random code like `K7QM-2XTR-9HBD-PW4C` (~78 bits) is generated and shown **once** with **Copy Code**. Codes are stored only as SHA-256 hashes, so they can't be shown again; use **Regenerate code** if one is lost.
+2. Send the code to the customer. They log in with it; their business name is prefilled at checkout and their orders are linked to their account.
+3. On the customer's page you can rename, **Regenerate code** (old code stops working and open sessions end immediately), **Deactivate/Activate** (deactivation signs them out at once), or **Delete account** (soft delete: access ends, past orders, invoices and login history are kept).
+
+**Sessions:** a random 256-bit token in an HttpOnly, Secure, SameSite=Lax cookie; only its hash is stored. Sessions end on logout, after 7 days of inactivity, or 30 days after login. Every customer page and API checks the session in the database; nothing relies on browser-side checks.
+
+**Rate limiting:** 10 failed attempts per IP address within 15 minutes blocks that IP for the rest of the window (other customers are unaffected). Set `LOGIN_RATE_LIMIT` to change it.
+
+## Login Activity
+**Admin → Login Activity** lists every attempt (successful and failed) with totals for successful logins, unique customers, the most recent login and failed attempts. Filter by customer, date range, result and device; click a name to open the account. Each customer's page has its own **Login history** with session status (Active, Logged out, Expired, Ended: code regenerated/account deactivated).
+
+Recorded per attempt (server-side only): time (UTC, shown in `STORE_TIMEZONE`), customer, IP address, approximate city/region/country, device type, browser + version, OS, result and failure reason (invalid code, revoked code, inactive account, rate limited). **The code entered is never stored.** Missing details show as Unknown — nothing is guessed. A session is never shown as "logged out" unless the customer pressed Log out.
+
+**Location** comes from Vercel's built-in IP geolocation headers (`x-vercel-ip-city`, `-country-region`, `-country`): free, no third-party service, and the IP is not sent anywhere else. It's approximate and can reflect a VPN, mobile carrier or office network. On other hosts location shows as Unknown unless your platform adds those headers; if you run behind your own proxy, set `TRUSTED_IP_HEADER` to the header it sets with the client IP.
+
+**Retention:** login records are kept for `Settings → Keep login records for (days)` (default 365) and removed only when you press **Login Activity → Retention → Remove old login records**.
+
+## Invoice images
+Each invoice line shows a small thumbnail of the product (or the selected flavor's own photo) next to the name and flavor — in the PDF (download and print) and on the order confirmation page. The image used is recorded on the order line at checkout, and images referenced by past orders are never deleted from storage, so old invoices keep their pictures. Missing or unreadable images show a neutral placeholder; images are shrunk server-side (sharp) before being embedded. The PDF is generated once at checkout and stored, so reopening it later always gives the same file.
 
 ## Product CSV
-Admin → Products → *Import / export CSV*. Columns: `name, price, sku, category, group, flavor, description, published, sort_order` (only `name` and `price` are required). Rows whose SKU matches an existing product update it; others are added. Images are set per product.
+Admin → Products → *Import / export CSV*. Columns: `name, price, sku, category, flavors, description, published, sort_order`. `flavors` lists names separated by semicolons (`Mint; Grape; Mango`); a filled cell replaces that product's flavor list, an empty cell leaves it unchanged. (only `name` and `price` are required). Rows whose SKU matches an existing product update it; others are added. Images are set per product.
 
 ## Testing
 ```bash

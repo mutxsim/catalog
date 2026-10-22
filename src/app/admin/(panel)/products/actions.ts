@@ -8,6 +8,7 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { MAX_PRODUCT_IMAGE_BYTES, readUpload } from "@/lib/uploads";
 import { firstError, productSchema } from "@/lib/validation";
 import { PRODUCT_CSV_HEADER, parseBool, parseCsv } from "@/lib/csv";
+import { parseFlavorPayload, removeUnreferencedImages, syncFlavors } from "@/lib/flavors-admin";
 
 export type FormState = { error?: string; ok?: string } | null;
 
@@ -17,7 +18,6 @@ function refresh() {
 }
 
 function dbError(message: string) {
-  if (/products_group_variant_key/.test(message)) return "This product group already has a flavor with that name.";
   if (/products_sku_key|duplicate key/.test(message)) return "Another product already uses this SKU.";
   return "Could not save the product. Please try again.";
 }
@@ -37,14 +37,15 @@ export async function saveProduct(_prev: FormState, formData: FormData): Promise
     price: String(formData.get("price") ?? ""),
     sku: String(formData.get("sku") ?? ""),
     category: String(formData.get("category") ?? ""),
-    group_name: String(formData.get("group_name") ?? ""),
-    variant_name: String(formData.get("variant_name") ?? ""),
     description: String(formData.get("description") ?? ""),
     published: formData.get("published") === "on",
     sort_order: String(formData.get("sort_order") ?? "") || String(id ? 0 : await nextSortOrder()),
   });
   if (!parsed.success) return { error: firstError(parsed.error) };
   const { price, ...rest } = parsed.data;
+
+  const flavors = parseFlavorPayload(formData.get("flavors_json"));
+  if (flavors && "error" in flavors) return { error: flavors.error };
 
   const upload = await readUpload(formData.get("image"), MAX_PRODUCT_IMAGE_BYTES, ["image/jpeg", "image/png", "image/webp"]);
   if (upload && "error" in upload) return { error: upload.error };
@@ -82,7 +83,15 @@ export async function saveProduct(_prev: FormState, formData: FormData): Promise
     return { error: dbError(error.message) };
   }
   if (imagePath !== undefined && previousImage && previousImage !== imagePath) {
-    await storage.remove([previousImage]);
+    await removeUnreferencedImages([previousImage]);
+  }
+
+  if (flavors) {
+    const result = await syncFlavors(productId, flavors.rows, formData);
+    if (result.error) {
+      refresh();
+      return { error: `Product saved, but flavors weren't fully updated: ${result.error}` };
+    }
   }
 
   refresh();
@@ -93,8 +102,9 @@ export async function deleteProduct(formData: FormData) {
   const { supabase } = await requireAdmin();
   const id = String(formData.get("id") ?? "");
   const { data } = await supabase.from("products").select("image_path").eq("id", id).maybeSingle();
+  const { data: flavorImages } = await supabase.from("product_flavors").select("image_path").eq("product_id", id);
   const { error } = await supabase.from("products").delete().eq("id", id);
-  if (!error && data?.image_path) await createServiceClient().storage.from("product-images").remove([data.image_path]);
+  if (!error) await removeUnreferencedImages([data?.image_path, ...(flavorImages ?? []).map((f) => f.image_path as string | null)]);
   refresh();
   redirect("/admin/products");
 }
@@ -162,8 +172,6 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
       price: get("price") ?? "",
       sku,
       category: get("category") ?? "",
-      group_name: get("group") ?? "",
-      variant_name: get("flavor") ?? "",
       description: get("description") ?? "",
       published: parseBool(get("published"), true),
       sort_order: sortRaw || String(existingId ? (existing!.find((p) => p.id === existingId)?.sort_order ?? 0) : nextOrder),
@@ -181,6 +189,19 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
       problems.push(`Row ${r + 1}: ${dbError(error.message)}`);
       continue;
     }
+    // "flavors" column (names separated by ;): replaces the product's flavor list.
+    // Left empty, the product's flavors are not changed.
+    const flavorCell = get("flavors")?.trim();
+    if (flavorCell && data) {
+      const names = [...new Set(flavorCell.split(";").map((n) => n.trim()).filter(Boolean))];
+      const { data: cur } = await supabase.from("product_flavors").select("id, name").eq("product_id", data.id);
+      const byName = new Map((cur ?? []).map((f) => [String(f.name).toLowerCase(), f.id as string]));
+      const rowsIn = names.map((name, k) => ({ key: `csv${k}`, id: byName.get(name.toLowerCase()) ?? null, name }));
+      const checked = parseFlavorPayload(JSON.stringify(rowsIn));
+      const res = checked && "rows" in checked ? await syncFlavors(data.id, checked.rows) : { error: checked && "error" in checked ? checked.error : undefined };
+      if (res.error) problems.push(`Row ${r + 1}: flavors — ${res.error}`);
+    }
+
     if (existingId) updated++;
     else {
       created++;

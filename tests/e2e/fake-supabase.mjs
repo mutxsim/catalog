@@ -18,6 +18,7 @@ const JWT_SECRET = "fake-secret";
 const ADMIN = { id: "00000000-0000-4000-8000-000000000001", email: "admin@example.com", password: "admin-pass-123" };
 
 const db = new PGlite();
+const outer = db;
 await db.exec(`
   create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
   create schema auth; create schema storage;
@@ -90,6 +91,10 @@ function condition(col, expr, params) {
   switch (op) {
     case "eq": params.push(val); sql = `${c}::text = $${params.length}`; break;
     case "neq": params.push(val); sql = `${c}::text <> $${params.length}`; break;
+    case "gte": params.push(val); sql = `${c} >= $${params.length}`; break;
+    case "gt": params.push(val); sql = `${c} > $${params.length}`; break;
+    case "lte": params.push(val); sql = `${c} <= $${params.length}`; break;
+    case "lt": params.push(val); sql = `${c} < $${params.length}`; break;
     case "ilike": params.push(val.replace(/\*/g, "%")); sql = `${c}::text ilike $${params.length}`; break;
     case "like": params.push(val.replace(/\*/g, "%")); sql = `${c}::text like $${params.length}`; break;
     case "is": sql = `${c} is ${val === "null" ? "null" : val === "true" ? "true" : "false"}`; break;
@@ -124,7 +129,19 @@ function selectList(select) {
   return select.split(",").map((c) => ident(c.trim())).join(", ");
 }
 
+// Each REST call runs in its own transaction with the caller's role applied,
+// like PostgREST does, so auth.uid()/auth.role() checks behave realistically.
 async function rest(req, res, url, body) {
+  const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+  const claims = verify(bearer);
+  const role = bearer === "fake-secret" || req.headers.apikey === "fake-secret" && !claims ? "service_role" : claims ? "authenticated" : "anon";
+  return outer.transaction(async (tx) => {
+    await tx.query("select set_config('request.jwt.sub', $1, true), set_config('request.jwt.role', $2, true)", [claims?.sub ?? "", role]);
+    return restInner(tx, req, res, url, body);
+  });
+}
+
+async function restInner(db, req, res, url, body) {
   const path = url.pathname.replace(/^\/rest\/v1\//, "");
   const params = [];
 
@@ -133,7 +150,13 @@ async function rest(req, res, url, body) {
     ident(fn);
     const args = body.length ? JSON.parse(body.toString()) : {};
     const named = Object.entries(args).map(([k, v]) => {
-      params.push(v === null ? null : typeof v === "object" ? JSON.stringify(v) : String(v));
+      // uuid[] parameters (named *_ids) need a Postgres array literal; everything else JSON/text.
+      params.push(
+        v === null ? null
+        : Array.isArray(v) && k.endsWith("_ids") ? `{${v.join(",")}}`
+        : typeof v === "object" ? JSON.stringify(v)
+        : String(v),
+      );
       return `${ident(k)} => $${params.length}`;
     });
     const { rows: meta } = await db.query("select proretset from pg_proc where proname = $1 limit 1", [fn]);

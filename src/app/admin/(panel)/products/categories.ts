@@ -1,5 +1,6 @@
 import "server-only";
 import { requireAdmin } from "@/lib/auth";
+import { publicStorageUrl } from "@/lib/public-url";
 
 export async function getCategories() {
   const { supabase } = await requireAdmin();
@@ -7,8 +8,12 @@ export async function getCategories() {
   return [...new Set((data ?? []).map((r) => r.category as string))].sort((a, b) => a.localeCompare(b));
 }
 
-export async function getGroups() {
+export async function getFlavorRows(productId: string) {
   const { supabase } = await requireAdmin();
-  const { data } = await supabase.from("products").select("group_name").not("group_name", "is", null);
-  return [...new Set((data ?? []).map((r) => r.group_name as string))].sort((a, b) => a.localeCompare(b));
+  const { data } = await supabase.from("product_flavors").select("id, name, image_path").eq("product_id", productId).order("sort_order").order("name");
+  return ((data ?? []) as { id: string; name: string; image_path: string | null }[]).map((f) => ({
+    id: f.id,
+    name: f.name,
+    imageUrl: publicStorageUrl("product-images", f.image_path),
+  }));
 }

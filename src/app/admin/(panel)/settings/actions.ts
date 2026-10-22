@@ -25,6 +25,7 @@ export async function saveSettings(_prev: SettingsState, formData: FormData): Pr
     invoice_footer: s("invoice_footer"),
     pickup_instructions: s("pickup_instructions"),
     retention_years: s("retention_years") || "7",
+    login_retention_days: s("login_retention_days") || "365",
   });
   if (!parsed.success) return { error: firstError(parsed.error) };
 

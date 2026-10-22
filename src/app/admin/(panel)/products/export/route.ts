@@ -10,14 +10,17 @@ export async function GET() {
 
   const { data, error } = await admin.supabase
     .from("products")
-    .select("name, price_cents, sku, category, group_name, variant_name, description, published, sort_order")
+    .select("id, name, price_cents, sku, category, description, published, sort_order")
     .order("sort_order")
     .order("name");
   if (error) return new Response("Could not export products", { status: 500 });
+  const { data: flavors } = await admin.supabase.from("product_flavors").select("product_id, name").order("sort_order").order("name");
+  const flavorNames = new Map<string, string[]>();
+  for (const f of flavors ?? []) flavorNames.set(f.product_id, [...(flavorNames.get(f.product_id) ?? []), f.name]);
 
   const csv = toCsv(
     [...PRODUCT_CSV_HEADER],
-    (data ?? []).map((p) => [p.name, centsToInput(p.price_cents), p.sku, p.category, p.group_name, p.variant_name, p.description, p.published, p.sort_order]),
+    (data ?? []).map((p) => [p.name, centsToInput(p.price_cents), p.sku, p.category, (flavorNames.get(p.id) ?? []).join("; "), p.description, p.published, p.sort_order]),
   );
   const date = new Date().toISOString().slice(0, 10);
   return new Response(csv, {

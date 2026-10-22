@@ -8,18 +8,19 @@ import { btn, hint, input, label, textarea } from "@/components/ui";
 import { centsToInput } from "@/lib/money";
 import type { Product } from "@/lib/types";
 import { saveProduct } from "./actions";
+import { FlavorEditor, type FlavorRow } from "./flavor-editor";
 
 export function ProductForm({
   product,
   imageUrl,
   categories,
-  groups,
+  flavors,
   currency,
 }: {
   product?: Product;
   imageUrl: string | null;
   categories: string[];
-  groups: string[];
+  flavors: FlavorRow[];
   currency: string;
 }) {
   const { state, pending, onSubmit } = useActionForm(saveProduct, null);
@@ -74,23 +75,7 @@ export function ProductForm({
           </div>
         </div>
 
-        <fieldset className="rounded-lg border border-line bg-card px-3 pb-4 pt-3">
-          <legend className="px-1 text-sm font-medium">Flavor / variety <span className="font-normal text-muted">(optional)</span></legend>
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div>
-              <label htmlFor="group_name" className={label}>Product group</label>
-              <input id="group_name" name="group_name" maxLength={200} list="groups" defaultValue={product?.group_name ?? ""} placeholder="e.g. Gummies 10ct" className={input} />
-              <datalist id="groups">
-                {groups.map((g) => <option key={g} value={g} />)}
-              </datalist>
-            </div>
-            <div>
-              <label htmlFor="variant_name" className={label}>Flavor / variety</label>
-              <input id="variant_name" name="variant_name" maxLength={120} defaultValue={product?.variant_name ?? ""} placeholder="e.g. Mango" className={input} />
-            </div>
-          </div>
-          <p className={hint}>Products with the same group show as one card where customers pick the flavor. Each flavor keeps its own price, SKU and image.</p>
-        </fieldset>
+        <FlavorEditor initial={flavors} />
 
         <div>
           <label htmlFor="description" className={label}>Description <span className="font-normal text-muted">(optional)</span></label>

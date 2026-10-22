@@ -8,10 +8,14 @@ import { tokensMatch, UUID_RE } from "@/lib/orders";
 import { getSettings } from "@/lib/settings";
 import { buildOrderSummary, waMeLink } from "@/lib/whatsapp/message";
 import { btn } from "@/components/ui";
+import Image from "next/image";
+import { requireCustomer } from "@/lib/customer-auth";
+import { publicStorageUrl } from "@/lib/public-url";
 
 export const metadata: Metadata = { title: "Order placed", referrer: "no-referrer" };
 
 export default async function OrderConfirmationPage({ params, searchParams }: PageProps<"/order/[id]">) {
+  const customer = await requireCustomer();
   const { id } = await params;
   const sp = await searchParams;
   const token = typeof sp.t === "string" ? sp.t : null;
@@ -19,6 +23,8 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pa
 
   const loaded = await loadOrder(id);
   if (!loaded || !tokensMatch(token, loaded.order.access_token)) notFound();
+  // Customers only ever see their own orders.
+  if (loaded.order.customer_id && loaded.order.customer_id !== customer.customerId) notFound();
   const { order, items } = loaded;
   const settings = await getSettings();
 
@@ -42,6 +48,42 @@ export default async function OrderConfirmationPage({ params, searchParams }: Pa
         <Row label="Business" value={order.business_name} />
         <Row label="Total due in-store" value={formatMoney(order.total_cents, order.currency)} strong />
       </dl>
+
+      <section aria-label="Invoice items" className="mt-8">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Invoice {order.invoice_number}</h2>
+        <ul className="mt-3 divide-y divide-line rounded-2xl border border-line bg-card">
+          {items.map((i) => {
+            const img = publicStorageUrl("product-images", i.image_path);
+            const m = (c: number) => formatMoney(c, order.currency);
+            return (
+              <li key={i.position} className="flex items-start gap-3 p-3">
+                <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-subtle">
+                  {img ? (
+                    <Image src={img} alt="" fill sizes="56px" className="object-cover" />
+                  ) : (
+                    <span className="flex h-full items-center justify-center text-[10px] text-muted">No image</span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px] leading-snug">{i.name}</p>
+                  {i.flavor_name && <p className="text-sm font-medium text-highlight">Flavor: {i.flavor_name}</p>}
+                  <p className="tabular mt-0.5 text-sm text-muted">
+                    {i.sku ? `${i.sku} · ` : ""}
+                    {i.quantity} × {m(i.unit_price_cents)}
+                  </p>
+                </div>
+                <p className="tabular shrink-0 text-[15px]">{m(i.line_total_cents)}</p>
+              </li>
+            );
+          })}
+        </ul>
+        <dl className="tabular mt-3 space-y-1 px-1 text-sm">
+          <div className="flex justify-between"><dt className="text-muted">Subtotal</dt><dd>{formatMoney(order.subtotal_cents, order.currency)}</dd></div>
+          {order.seller.tax_enabled && (
+            <div className="flex justify-between"><dt className="text-muted">{order.tax_label} ({order.tax_rate}%)</dt><dd>{formatMoney(order.tax_cents, order.currency)}</dd></div>
+          )}
+        </dl>
+      </section>
 
       {pickup && (
         <div className="mt-6">

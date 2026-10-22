@@ -7,7 +7,7 @@ import { getSettings } from "@/lib/settings";
 import type { Product } from "@/lib/types";
 import { btn } from "@/components/ui";
 import { deleteProduct } from "../actions";
-import { getCategories, getGroups } from "../categories";
+import { getCategories, getFlavorRows } from "../categories";
 import { ProductForm } from "../product-form";
 import { ConfirmButton } from "@/components/confirm-button";
 
@@ -20,7 +20,7 @@ export default async function EditProductPage({ params }: PageProps<"/admin/prod
   const { data } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   if (!data) notFound();
   const product = data as Product;
-  const [categories, groups, settings] = await Promise.all([getCategories(), getGroups(), getSettings()]);
+  const [categories, flavors, settings] = await Promise.all([getCategories(), getFlavorRows(product.id), getSettings()]);
 
   return (
     <div>
@@ -30,12 +30,12 @@ export default async function EditProductPage({ params }: PageProps<"/admin/prod
         product={product}
         imageUrl={publicStorageUrl("product-images", product.image_path)}
         categories={categories}
-        groups={groups}
+        flavors={flavors}
         currency={settings.currency}
       />
       <form action={deleteProduct} className="mt-12 border-t border-line pt-6">
         <input type="hidden" name="id" value={product.id} />
-        <p className="mb-3 text-sm text-muted">Deleting removes the product from the catalog. Past orders and invoices keep their original details.</p>
+        <p className="mb-3 text-sm text-muted">Deleting removes the product from the catalog. Its flavors are removed too. Past orders and invoices keep their original details.</p>
         <ConfirmButton message={`Delete “${product.name}”? This can't be undone.`} className={btn.danger}>
           Delete product
         </ConfirmButton>

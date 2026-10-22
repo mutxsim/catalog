@@ -8,7 +8,7 @@ export const ORDER_ERRORS: Record<string, { status: number; message: string }> =
   INVALID_BUSINESS_NAME: { status: 422, message: "Enter your store or business name (up to 120 characters)." },
   INVALID_ITEMS: { status: 422, message: "Your cart has an invalid item. Please review it and try again." },
   INVALID_QUANTITY: { status: 422, message: "Quantities must be between 1 and 9,999." },
-  ITEMS_UNAVAILABLE: { status: 409, message: "Some items are no longer available. Please review your order." },
+  ITEMS_UNAVAILABLE: { status: 409, message: "Some items or flavors are no longer available. Please review your order." },
   PRICE_CHANGED: { status: 409, message: "Prices have changed since you loaded this page. Please review the updated total." },
   RATE_LIMITED: { status: 429, message: "Too many orders from this connection. Please wait a few minutes and try again." },
   INVALID_REQUEST: { status: 400, message: "Invalid request." },
@@ -26,7 +26,7 @@ export function normaliseQuote(q: Quote): Quote {
     tax_cents: Number(q.tax_cents),
     total_cents: Number(q.total_cents),
     tax_rate: Number(q.tax_rate),
-    lines: q.lines.map((l) => ({ ...l, line_total_cents: Number(l.line_total_cents) })),
+    lines: q.lines.map((l) => ({ ...l, flavor_id: l.flavor_id ?? null, flavor_name: l.flavor_name ?? null, line_total_cents: Number(l.line_total_cents) })),
   };
 }
 

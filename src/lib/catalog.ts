@@ -1,41 +1,31 @@
-import type { Product } from "@/lib/types";
+import "server-only";
+import { createPublicClient } from "@/lib/supabase/server";
+import type { Flavor, Product, ProductWithFlavors } from "@/lib/types";
 
-/** One catalog card: a single product, or a group of flavors of the same product. */
-export type CatalogEntry = {
-  key: string;
-  title: string;
-  category: string | null;
-  sortOrder: number;
-  variants: Product[];
-};
+export const PRODUCT_COLUMNS = "id, name, price_cents, sku, description, category, image_path, published, sort_order";
+export const FLAVOR_COLUMNS = "id, product_id, name, image_path, sort_order";
 
-export const groupKey = (p: Pick<Product, "id" | "group_name">) =>
-  p.group_name?.trim() ? `g:${p.group_name.trim().toLowerCase()}` : `p:${p.id}`;
-
-/** Label shown on a flavor option. */
-export const variantLabel = (p: Pick<Product, "name" | "variant_name">) => p.variant_name?.trim() || p.name;
-
-/** Name used in the cart, on invoices and in WhatsApp (mirrors quote_items in SQL). */
-export function lineName(p: Pick<Product, "name" | "variant_name">) {
-  const v = p.variant_name?.trim();
-  return v && !p.name.toLowerCase().includes(v.toLowerCase()) ? `${p.name} — ${v}` : p.name;
+/** Attach each product's flavors (in display order). */
+export async function withFlavors(products: Product[]): Promise<ProductWithFlavors[]> {
+  if (products.length === 0) return [];
+  const { data, error } = await createPublicClient()
+    .from("product_flavors")
+    .select(FLAVOR_COLUMNS)
+    .in("product_id", products.map((p) => p.id))
+    .order("sort_order")
+    .order("name");
+  if (error) throw new Error(`Could not load flavors: ${error.message}`);
+  const byProduct = new Map<string, Flavor[]>();
+  for (const f of (data ?? []) as Flavor[]) {
+    const list = byProduct.get(f.product_id) ?? [];
+    list.push(f);
+    byProduct.set(f.product_id, list);
+  }
+  return products.map((p) => ({ ...p, flavors: byProduct.get(p.id) ?? [] }));
 }
 
-/** Collapse products that share a group into one entry, keeping catalog order. */
-export function groupProducts(products: Product[]): CatalogEntry[] {
-  const map = new Map<string, CatalogEntry>();
-  for (const p of products) {
-    const key = groupKey(p);
-    const entry = map.get(key);
-    if (entry) {
-      entry.variants.push(p);
-      entry.sortOrder = Math.min(entry.sortOrder, p.sort_order);
-      entry.category ??= p.category;
-    } else {
-      map.set(key, { key, title: p.group_name?.trim() || p.name, category: p.category, sortOrder: p.sort_order, variants: [p] });
-    }
-  }
-  const entries = [...map.values()];
-  for (const e of entries) e.variants.sort((a, b) => a.sort_order - b.sort_order || variantLabel(a).localeCompare(variantLabel(b)));
-  return entries.sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title));
+/** IDs of published products with a flavor whose name matches the search. */
+export async function productIdsWithFlavor(term: string): Promise<{ productId: string; flavorId: string }[]> {
+  const { data } = await createPublicClient().from("product_flavors").select("id, product_id").ilike("name", `%${term}%`).limit(500);
+  return ((data ?? []) as { id: string; product_id: string }[]).map((r) => ({ productId: r.product_id, flavorId: r.id }));
 }

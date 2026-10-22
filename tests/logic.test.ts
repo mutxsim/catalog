@@ -131,7 +131,7 @@ describe("validation", () => {
   it("normalises settings", () => {
     const r = settingsSchema.parse({
       business_name: "X", address: "", whatsapp_number: "+1 (215) 555-0100", currency: "usd", invoice_prefix: "INV-",
-      tax_enabled: true, tax_label: "Tax", tax_rate: "6.6251", invoice_footer: "", pickup_instructions: "", retention_years: "7",
+      tax_enabled: true, tax_label: "Tax", tax_rate: "6.6251", invoice_footer: "", pickup_instructions: "", retention_years: "7", login_retention_days: "365",
     });
     expect(r.whatsapp_number).toBe("12155550100");
     expect(r.currency).toBe("USD");

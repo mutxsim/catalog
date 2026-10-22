@@ -5,7 +5,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -33,7 +33,7 @@ async function quote(items: unknown) {
   const r = await db.query<{ q: Record<string, unknown> }>("select public.quote_items($1::jsonb) as q", [JSON.stringify(items)]);
   return r.rows[0].q as {
     lines: { product_id: string; quantity: number; line_total_cents: number }[];
-    unavailable: string[];
+    unavailable: { product_id: string; flavor_id: string | null; reason: string }[];
     subtotal_cents: number; tax_cents: number; total_cents: number;
   };
 }
@@ -65,7 +65,7 @@ describe("quote_items", () => {
     expect(q.lines).toHaveLength(1);
     expect(q.lines[0].quantity).toBe(3);
     expect(Number(q.subtotal_cents)).toBe(3897);
-    expect(q.unavailable).toEqual([b]);
+    expect(q.unavailable).toEqual([{ product_id: b, flavor_id: null, reason: "unavailable" }]);
   });
 
   it("rejects malformed input", async () => {
@@ -176,5 +176,136 @@ describe("flavors (0002)", () => {
     const o = await place("Flavor Shop", [{ product_id: r.rows[0].id, quantity: 2 }], 1000);
     const item = (await db.query<{ name: string }>("select name from public.order_items where order_id = $1", [o.order_id])).rows[0];
     expect(item.name).toBe("Gummies 10ct — Mango");
+  });
+});
+
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+
+describe("product flavors (0003)", () => {
+  it("prices flavors from the parent, splits flavors into lines, snapshots flavor + image", async () => {
+    const pid = await addProduct("Vape 5000", 1500, { sku: "VP-5" });
+    await db.query("update public.products set image_path = 'products/p.png' where id = $1", [pid]);
+    const f = await db.query<{ id: string; name: string }>(
+      "insert into public.product_flavors (product_id, name, image_path, sort_order) values ($1, 'Mint', 'flavors/mint.png', 1), ($1, 'Grape', null, 2) returning id, name",
+      [pid],
+    );
+    const mint = f.rows.find((r) => r.name === "Mint")!.id;
+    const grape = f.rows.find((r) => r.name === "Grape")!.id;
+
+    // No flavor chosen for a product that has flavors -> not orderable.
+    const missing = await quote([{ product_id: pid, quantity: 1 }]);
+    expect(missing.unavailable[0].reason).toBe("flavor_required");
+    // Flavor from another product -> rejected.
+    const other = await addProduct("Other", 100);
+    const bad = await quote([{ product_id: other, flavor_id: mint, quantity: 1 }]);
+    expect(bad.unavailable[0].reason).toBe("flavor_unavailable");
+
+    const q = await quote([
+      { product_id: pid, flavor_id: mint, quantity: 2 },
+      { product_id: pid, flavor_id: grape, quantity: 1 },
+      { product_id: pid, flavor_id: mint, quantity: 1 },
+    ]);
+    const lines = q.lines as unknown as { flavor_name: string; quantity: number; image_path: string; line_total_cents: number }[];
+    expect(lines.map((l) => [l.flavor_name, l.quantity, l.image_path])).toEqual([
+      ["Mint", 3, "flavors/mint.png"],
+      ["Grape", 1, "products/p.png"], // no flavor image -> parent image
+    ]);
+    expect(Number(q.subtotal_cents)).toBe(6000);
+
+    const o = await place("Flavor Buyer", [
+      { product_id: pid, flavor_id: mint, quantity: 3 },
+      { product_id: pid, flavor_id: grape, quantity: 1 },
+    ], 6000);
+    // Removing/renaming flavors later never changes the order.
+    await db.query("update public.product_flavors set name = 'Cool Mint' where id = $1", [mint]);
+    await db.query("delete from public.product_flavors where id = $1", [grape]);
+    const items = (await db.query<{ flavor_name: string; flavor_id: string | null; image_path: string | null }>(
+      "select flavor_name, flavor_id, image_path from public.order_items where order_id = $1 order by position", [o.order_id])).rows;
+    expect(items).toEqual([
+      { flavor_name: "Mint", flavor_id: mint, image_path: "flavors/mint.png" },
+      { flavor_name: "Grape", flavor_id: null, image_path: "products/p.png" },
+    ]);
+    await expect(db.query("update public.order_items set flavor_name = 'X' where order_id = $1", [o.order_id])).rejects.toThrow(/IMMUTABLE/);
+    await expect(
+      db.query("insert into public.product_flavors (product_id, name) values ($1, ' cool mint ')", [pid]),
+    ).rejects.toThrow(/product_flavors_name_key|duplicate/);
+  });
+});
+
+describe("customer access codes (0003)", () => {
+  const login = async (code: string, ip = "203.0.113.5") => {
+    const token = randomUUID();
+    const r = await db.query<{ status: string; customer_id: string | null; session_id: string | null }>(
+      "select * from public.customer_login($1, $2, $3, 'UA', 'mobile', 'Safari', '17.0', 'iOS', 'Philadelphia', 'Pennsylvania', 'US')",
+      [sha(code), sha(token), ip],
+    );
+    return { ...r.rows[0], token };
+  };
+  const session = async (token: string) =>
+    (await db.query<{ status: string; customer_name: string | null }>("select * from public.customer_session($1)", [sha(token)])).rows[0];
+
+  it("logs in with a code only, tracks sessions, and invalidates on regenerate/deactivate/delete", async () => {
+    const cid = (await db.query<{ id: string }>("select public.create_customer('Corner Deli', $1, 'AB12') as id", [sha("CODE-ONE")])).rows[0].id;
+    await expect(db.query("select public.create_customer(' corner deli ', $1, 'X')", [sha("OTHER")])).rejects.toThrow(/customers_name_key|duplicate/);
+
+    const ok = await login("CODE-ONE");
+    expect(ok.status).toBe("ok");
+    expect(ok.customer_id).toBe(cid);
+    expect(await session(ok.token)).toMatchObject({ status: "active", customer_name: "Corner Deli" });
+    const ev = (await db.query("select success, device_type, browser, os, city, ip, customer_id from public.login_events where session_id = $1", [ok.session_id])).rows[0];
+    expect(ev).toEqual({ success: true, device_type: "mobile", browser: "Safari", os: "iOS", city: "Philadelphia", ip: "203.0.113.5", customer_id: cid });
+
+    // Logout ends the session.
+    await db.query("select public.customer_logout($1)", [sha(ok.token)]);
+    expect((await session(ok.token)).status).toBe("ended");
+
+    // Regenerating revokes the old code and ends live sessions.
+    const s2 = await login("CODE-ONE");
+    await db.query("select public.regenerate_customer_code($1, $2, 'CD34')", [cid, sha("CODE-TWO")]);
+    expect((await session(s2.token)).status).toBe("ended");
+    expect((await login("CODE-ONE")).status).toBe("revoked_code");
+    const s3 = await login("CODE-TWO");
+    expect(s3.status).toBe("ok");
+
+    // Deactivating ends sessions and blocks login; reactivating restores login.
+    await db.query("select public.set_customer_active($1, false)", [cid]);
+    expect((await session(s3.token)).status).toBe("ended");
+    expect((await login("CODE-TWO")).status).toBe("inactive_account");
+    await db.query("select public.set_customer_active($1, true)", [cid]);
+    expect((await login("CODE-TWO")).status).toBe("ok");
+
+    const reasons = (await db.query<{ end_reason: string }>("select end_reason from public.customer_sessions where customer_id = $1 order by created_at", [cid])).rows.map((r) => r.end_reason);
+    expect(reasons.slice(0, 3)).toEqual(["logout", "code_regenerated", "deactivated"]);
+
+    // Soft delete: login fails like an unknown code, history is kept.
+    await db.query("select public.delete_customer($1)", [cid]);
+    expect((await login("CODE-TWO")).status).toBe("invalid_code");
+    const kept = (await db.query<{ n: number }>("select count(*)::int as n from public.login_events where customer_id = $1", [cid])).rows[0].n;
+    expect(kept).toBeGreaterThan(5);
+    // The name can be reused after deletion.
+    await db.query("select public.create_customer('Corner Deli', $1, 'EF56')", [sha("CODE-THREE")]);
+  });
+
+  it("expires idle sessions without claiming a logout", async () => {
+    await db.query("select public.create_customer('Idle Shop', $1, 'ZZ99')", [sha("IDLE-CODE")]);
+    const s = await login("IDLE-CODE", "198.51.100.9");
+    await db.query("update public.customer_sessions set last_seen_at = now() - interval '8 days' where id = $1", [s.session_id]);
+    expect((await session(s.token)).status).toBe("expired");
+    const row = (await db.query<{ end_reason: string; ended_at: string; last_seen_at: string }>(
+      "select end_reason, ended_at, last_seen_at from public.customer_sessions where id = $1", [s.session_id])).rows[0];
+    expect(row.end_reason).toBe("expired");
+    expect(new Date(row.ended_at).getTime()).toBeLessThan(Date.now() - 23 * 3600 * 1000);
+  });
+
+  it("records failures without the code and rate limits per IP", async () => {
+    for (let i = 0; i < 10; i++) expect((await login(`WRONG-${i}`, "192.0.2.77")).status).toBe("invalid_code");
+    expect((await login("WRONG-X", "192.0.2.77")).status).toBe("rate_limited");
+    // Another IP is unaffected.
+    expect((await login("WRONG-Y", "192.0.2.78")).status).toBe("invalid_code");
+    const cols = (await db.query<{ column_name: string }>(
+      "select column_name from information_schema.columns where table_name = 'login_events'")).rows.map((r) => r.column_name);
+    expect(cols.some((c) => /code/.test(c))).toBe(false);
+    const rl = (await db.query<{ n: number }>("select count(*)::int as n from public.login_events where ip = '192.0.2.77' and rate_limited")).rows[0].n;
+    expect(rl).toBe(1);
   });
 });

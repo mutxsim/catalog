@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useSyncExternalStore } from "react";
-import { cart, cartSignature, useCart, type CartItem } from "@/lib/cart";
+import { cart, cartSignature, toRequestItems, useCart, type CartItem } from "@/lib/cart";
+import Image from "next/image";
+import { publicStorageUrl } from "@/lib/public-url";
 import { formatMoney } from "@/lib/money";
 import { btn, input, label } from "@/components/ui";
 import { useQuote } from "@/components/store/use-quote";
@@ -29,12 +31,12 @@ function submissionKey(items: CartItem[]) {
   }
 }
 
-export function CheckoutView({ currency }: { currency: string }) {
+export function CheckoutView({ currency, defaultBusinessName }: { currency: string; defaultBusinessName: string }) {
   const router = useRouter();
   const items = useCart();
   const hydrated = useHydrated();
   const { quote, loading, error: quoteError, refresh } = useQuote(items);
-  const [businessName, setBusinessName] = useState("");
+  const [businessName, setBusinessName] = useState(defaultBusinessName);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -71,12 +73,16 @@ export function CheckoutView({ currency }: { currency: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           businessName: name,
-          items: items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+          items: toRequestItems(items),
           expectedTotalCents: quote.total_cents,
           idempotencyKey: submissionKey(items),
         }),
       });
       const body = (await res.json().catch(() => ({}))) as { orderId?: string; token?: string; error?: string; code?: string };
+      if (res.status === 401) {
+        router.replace("/login?reason=ended");
+        return;
+      }
       if (!res.ok || !body.orderId || !body.token) {
         if (body.code === "PRICE_CHANGED" || body.code === "ITEMS_UNAVAILABLE") await refresh();
         throw new Error(body.error ?? "We couldn't place your order. Please try again.");
@@ -120,9 +126,13 @@ export function CheckoutView({ currency }: { currency: string }) {
           <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Order summary</h2>
           <ul className="mt-3 divide-y divide-line border-y border-line">
             {(quote?.lines ?? []).map((l) => (
-              <li key={l.product_id} className="flex justify-between gap-4 py-3 text-[15px]">
-                <div className="min-w-0">
+              <li key={`${l.product_id}:${l.flavor_id ?? ""}`} className="flex items-start gap-3 py-3 text-[15px]">
+                <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-subtle">
+                  {l.image_path && <Image src={publicStorageUrl("product-images", l.image_path)!} alt="" fill sizes="48px" className="object-cover" />}
+                </div>
+                <div className="min-w-0 flex-1">
                   <p className="leading-snug">{l.name}</p>
+                  {l.flavor_name && <p className="text-sm font-medium text-highlight">Flavor: {l.flavor_name}</p>}
                   <p className="tabular mt-0.5 text-sm text-muted">
                     {l.sku ? `${l.sku} · ` : ""}
                     {l.quantity} × {m(l.unit_price_cents)}

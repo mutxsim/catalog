@@ -6,12 +6,15 @@ import { clientHash, isSameOrigin, mapDbError } from "@/lib/orders";
 import { ensureInvoice } from "@/lib/invoice/service";
 import { notifyOrder } from "@/lib/whatsapp/notify";
 import { firstError, orderRequestSchema } from "@/lib/validation";
+import { customerOrNull, unauthorized } from "@/lib/customer-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
   if (!isSameOrigin(req)) return Response.json({ error: "Forbidden." }, { status: 403 });
+  const customer = await customerOrNull();
+  if (!customer) return unauthorized();
   if (Number(req.headers.get("content-length") ?? 0) > 64 * 1024) {
     return Response.json({ error: "Order is too large." }, { status: 413 });
   }
@@ -24,13 +27,14 @@ export async function POST(req: Request) {
   const db = createServiceClient();
   const { data, error } = await db.rpc("place_order", {
     p_business_name: businessName,
-    p_items: items.map((i) => ({ product_id: i.productId, quantity: i.quantity })),
+    p_items: items.map((i) => ({ product_id: i.productId, flavor_id: i.flavorId ?? null, quantity: i.quantity })),
     p_idempotency_key: idempotencyKey,
     p_access_token: randomBytes(32).toString("base64url"),
     p_expected_total_cents: expectedTotalCents,
     p_client_hash: clientHash(req.headers),
     p_rate_limit: env.orderRateLimit,
     p_rate_window_minutes: env.orderRateWindowMinutes,
+    p_customer_id: customer.customerId,
   });
 
   if (error) {

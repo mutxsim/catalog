@@ -4,7 +4,10 @@ import { STATUS_LABEL, type Order, type OrderItem } from "@/lib/types";
 type SummaryOrder = Pick<Order, "order_number" | "business_name" | "currency" | "subtotal_cents" | "tax_label" | "tax_cents" | "total_cents" | "status" | "seller">;
 
 /** The plain-text order summary sent to the owner (and prefilled in wa.me links). */
-export function buildOrderSummary(order: SummaryOrder, items: Pick<OrderItem, "name" | "quantity" | "line_total_cents">[], opts: { attachmentNote?: string } = {}) {
+type SummaryItem = Pick<OrderItem, "name" | "quantity" | "line_total_cents"> & { flavor_name?: string | null };
+const itemLabel = (i: SummaryItem) => (i.flavor_name ? `${i.name} (${i.flavor_name})` : i.name);
+
+export function buildOrderSummary(order: SummaryOrder, items: SummaryItem[], opts: { attachmentNote?: string } = {}) {
   const m = (c: number) => formatMoney(c, order.currency);
   const lines = [
     "NEW WHOLESALE ORDER",
@@ -13,7 +16,7 @@ export function buildOrderSummary(order: SummaryOrder, items: Pick<OrderItem, "n
     `Business: ${order.business_name}`,
     "",
     "Items:",
-    ...items.map((i) => `• ${i.name} × ${i.quantity} — ${m(i.line_total_cents)}`),
+    ...items.map((i) => `• ${itemLabel(i)} × ${i.quantity} — ${m(i.line_total_cents)}`),
     "",
     `Subtotal: ${m(order.subtotal_cents)}`,
     ...(order.seller.tax_enabled ? [`${order.tax_label}: ${m(order.tax_cents)}`] : []),
@@ -30,9 +33,9 @@ export function buildOrderSummary(order: SummaryOrder, items: Pick<OrderItem, "n
  * Template parameters can't contain newlines or long runs of spaces.
  * Order: {{1}} order number, {{2}} business, {{3}} total due, {{4}} items.
  */
-export function buildTemplateParams(order: SummaryOrder, items: Pick<OrderItem, "name" | "quantity" | "line_total_cents">[]) {
+export function buildTemplateParams(order: SummaryOrder, items: SummaryItem[]) {
   const flat = (s: string) => s.replace(/\s+/g, " ").trim();
-  const parts = items.map((i) => `${flat(i.name)} x${i.quantity} (${formatMoney(i.line_total_cents, order.currency)})`);
+  const parts = items.map((i) => `${flat(itemLabel(i))} x${i.quantity} (${formatMoney(i.line_total_cents, order.currency)})`);
   let itemsText = "";
   for (let i = 0; i < parts.length; i++) {
     const next = itemsText ? `${itemsText}; ${parts[i]}` : parts[i];

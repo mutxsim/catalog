@@ -72,3 +72,31 @@ describe("renderInvoicePdf", () => {
     expect(invoiceFileName("INV/../001")).toBe("Invoice-INV001.pdf");
   });
 });
+
+describe("invoice product images", () => {
+  it("draws a thumbnail per line, placeholders for missing/broken images, across pages", async () => {
+    const sharp = (await import("sharp")).default;
+    const swatch = async (color: string, w = 300, h = 200) =>
+      new Uint8Array(await sharp({ create: { width: w, height: h, channels: 3, background: color } }).jpeg().toBuffer());
+    const red = { bytes: await swatch("#c0392b"), mime: "image/jpeg" as const };
+    const green = { bytes: await swatch("#27ae60", 120, 400), mime: "image/jpeg" as const }; // tall: must not stretch
+    const broken = { bytes: new Uint8Array([1, 2, 3, 4]), mime: "image/png" as const };
+    const items = [
+      { position: 1, name: "Disposable Vape 5000", flavor_name: "Blue Razz", sku: "DV-5", unit_price_cents: 1500, quantity: 3, line_total_cents: 4500 },
+      { position: 2, name: "Disposable Vape 5000", flavor_name: "Watermelon Ice", sku: "DV-5", unit_price_cents: 1500, quantity: 2, line_total_cents: 3000 },
+      { position: 3, name: "Rolling Papers (no image)", sku: null, unit_price_cents: 200, quantity: 10, line_total_cents: 2000 },
+      { position: 4, name: "Broken image product", sku: "BR-1", unit_price_cents: 100, quantity: 1, line_total_cents: 100 },
+      ...Array.from({ length: 26 }, (_, i) => ({ position: 5 + i, name: `Filler item ${i + 1}`, flavor_name: i % 3 ? null : "Mint", sku: `F-${i}`, unit_price_cents: 100, quantity: 1, line_total_cents: 100 })),
+    ];
+    const itemImages = [red, green, null, broken, ...items.slice(4).map((_, i) => (i % 2 ? red : null))];
+    const bytes = await renderInvoicePdf({
+      ...base,
+      order: { ...base.order, subtotal_cents: 12200, tax_cents: 732, total_cents: 12932 },
+      items,
+      itemImages,
+    });
+    const doc = await PDFDocument.load(bytes);
+    expect(doc.getPageCount()).toBeGreaterThan(1);
+    if (outDir) writeFileSync(join(outDir, "invoice-images.pdf"), bytes);
+  });
+});

@@ -21,16 +21,21 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
 
   let query = supabase
     .from("products")
-    .select("id, name, price_cents, sku, category, group_name, variant_name, image_path, published, sort_order")
+    .select("id, name, price_cents, sku, category, image_path, published, sort_order")
     .order("sort_order")
     .order("name")
     .order("id");
   if (q) {
     const term = q.replace(/[%_,()]/g, " ");
-    query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%,group_name.ilike.%${term}%,variant_name.ilike.%${term}%`);
+    query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%`);
   }
   const { data, error } = await query;
   const products = (data ?? []) as Product[];
+  const { data: flavorRows } = products.length
+    ? await supabase.from("product_flavors").select("product_id").in("product_id", products.map((p) => p.id))
+    : { data: [] };
+  const flavorCount = new Map<string, number>();
+  for (const f of flavorRows ?? []) flavorCount.set(f.product_id, (flavorCount.get(f.product_id) ?? 0) + 1);
   const canReorder = !q;
 
   return (
@@ -90,9 +95,9 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
                       </div>
                       <span>
                         <span className="font-medium">{p.name}</span>
-                        {(p.variant_name || p.group_name) && (
+                        {(flavorCount.get(p.id) ?? 0) > 0 && (
                           <span className="block text-xs text-muted">
-                            {[p.group_name, p.variant_name].filter(Boolean).join(" · ")}
+                            {flavorCount.get(p.id)} flavor{flavorCount.get(p.id) === 1 ? "" : "s"}
                           </span>
                         )}
                       </span>
@@ -134,7 +139,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Import / export CSV</summary>
         <div className="border-t border-line px-4 py-4 text-sm">
           <p className="text-muted">
-            Columns: <code className="font-mono text-xs">name, price, sku, category, group, flavor, description, published, sort_order</code>. Rows with a
+            Columns: <code className="font-mono text-xs">name, price, sku, category, flavors, description, published, sort_order</code>. List flavors separated by semicolons (e.g. <code className="font-mono text-xs">Mint; Grape; Mango</code>); a filled flavors cell replaces that product&apos;s flavor list. Rows with a
             SKU that already exists update that product; other rows are added. Images are managed per product.
           </p>
           <div className="mt-4 flex flex-wrap items-start gap-3">
