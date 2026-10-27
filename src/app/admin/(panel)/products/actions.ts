@@ -39,6 +39,8 @@ export async function saveProduct(_prev: FormState, formData: FormData): Promise
     price: String(formData.get("price") ?? ""),
     sku: String(formData.get("sku") ?? ""),
     category: String(formData.get("category") ?? ""),
+    catalog: String(formData.get("catalog") ?? "happy"),
+    brand: String(formData.get("brand") ?? ""),
     description: String(formData.get("description") ?? ""),
     published: formData.get("published") === "on",
     sort_order: String(formData.get("sort_order") ?? "") || String(id ? 0 : await nextSortOrder()),
@@ -133,8 +135,11 @@ export async function moveProduct(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   const dir = formData.get("dir") === "up" ? -1 : 1;
 
+  // Products move within their own catalog (that's the order customers see).
+  const { data: self } = await supabase.from("products").select("catalog").eq("id", id).maybeSingle();
+  if (!self) return;
   const data = await fetchAll<{ id: string; sort_order: number }>((from, to) =>
-    supabase.from("products").select("id, sort_order").order("sort_order").order("name").order("id").range(from, to),
+    supabase.from("products").select("id, sort_order").eq("catalog", self.catalog).order("sort_order").order("name").order("id").range(from, to),
   );
   const list = data.map((p) => p.id);
   const i = list.indexOf(id);
@@ -165,8 +170,9 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
   if (rows.length > 2001) return { error: "Import up to 2,000 products at a time." };
 
   const started = Date.now();
-  const existing = await fetchAll<{ id: string; sku: string | null; sort_order: number; image_path: string | null; image_source_url: string | null }>((from, to) =>
-    supabase.from("products").select("id, sku, sort_order, image_path, image_source_url").order("id").range(from, to),
+  type Existing = { id: string; sku: string | null; sort_order: number; catalog: string; brand: string | null; image_path: string | null; image_source_url: string | null };
+  const existing = await fetchAll<Existing>((from, to) =>
+    supabase.from("products").select("id, sku, sort_order, catalog, brand, image_path, image_source_url").order("id").range(from, to),
   );
   const byId = new Map(existing.map((p) => [p.id, p]));
   const imageJobs: { row: number; productId: string; url: string; previous: string | null }[] = [];
@@ -180,17 +186,26 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
   for (let r = 1; r < rows.length; r++) {
     const get = (name: (typeof PRODUCT_CSV_HEADER)[number]) => (col(name) >= 0 ? (rows[r][col(name)] ?? "").replace(/^'(?=[=+\-@])/, "") : undefined);
     const sku = get("sku")?.trim() || "";
-    const existingId = sku ? bySku.get(sku.toLowerCase()) : undefined;
+    // Match an existing product by its id (from an export) first, then by SKU.
+    const idCell = get("id")?.trim().toLowerCase() || "";
+    const existingId = (idCell && byId.has(idCell) ? idCell : undefined) ?? (sku ? bySku.get(sku.toLowerCase()) : undefined);
+    const before = existingId ? byId.get(existingId) : undefined;
     const sortRaw = get("sort_order")?.trim();
+    // Missing or empty catalog keeps the product where it is (new products go to Happy).
+    // A missing brand column keeps the current brand; an empty brand cell clears it.
+    const catalogCell = get("catalog")?.trim().toLowerCase() || "";
+    const brandCell = get("brand");
 
     const parsed = productSchema.safeParse({
       name: get("name") ?? "",
       price: get("price") ?? "",
       sku,
       category: get("category") ?? "",
+      catalog: catalogCell || before?.catalog || "happy",
+      brand: brandCell ?? before?.brand ?? "",
       description: get("description") ?? "",
       published: parseBool(get("published"), true),
-      sort_order: sortRaw || String(existingId ? (existing.find((p) => p.id === existingId)?.sort_order ?? 0) : nextOrder),
+      sort_order: sortRaw || String(before ? before.sort_order : nextOrder),
     });
     if (!parsed.success) {
       problems.push(`Row ${r + 1}: ${firstError(parsed.error)}`);
@@ -228,7 +243,6 @@ export async function importProductsCsv(_prev: FormState, formData: FormData): P
     // product already has the image from the same link (so re-imports are fast).
     const imageUrl = get("image_url")?.trim();
     if (imageUrl && data) {
-      const before = byId.get(data.id);
       if (!/^https?:\/\/\S+$/i.test(imageUrl) || imageUrl.length > 2000) problems.push(`Row ${r + 1}: image_url isn't a valid http(s) link`);
       else if (!(before?.image_path && before.image_source_url === imageUrl))
         imageJobs.push({ row: r + 1, productId: data.id, url: imageUrl, previous: before?.image_path ?? null });

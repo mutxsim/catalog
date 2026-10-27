@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { useActionForm } from "@/components/use-action-form";
 import { btn, hint, input, label, textarea } from "@/components/ui";
 import { centsToInput } from "@/lib/money";
-import type { Product } from "@/lib/types";
+import { CATALOGS, CATALOG_LABEL, type Catalog, type Product } from "@/lib/types";
 import { saveProduct } from "./actions";
 import { FlavorEditor, type FlavorRow } from "./flavor-editor";
 
@@ -14,12 +14,16 @@ export function ProductForm({
   product,
   imageUrl,
   categories,
+  brands,
+  defaultCatalog = "happy",
   flavors,
   currency,
 }: {
   product?: Product;
   imageUrl: string | null;
   categories: string[];
+  brands: string[];
+  defaultCatalog?: Catalog;
   flavors: FlavorRow[];
   currency: string;
 }) {
@@ -57,6 +61,23 @@ export function ProductForm({
           <div>
             <label htmlFor="sku" className={label}>SKU <span className="font-normal text-muted">(optional)</span></label>
             <input id="sku" name="sku" maxLength={64} defaultValue={product?.sku ?? ""} className={input} />
+          </div>
+        </div>
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div>
+            <label htmlFor="catalog" className={label}>Catalog</label>
+            <select id="catalog" name="catalog" defaultValue={product?.catalog ?? defaultCatalog} className={input}>
+              {CATALOGS.map((c) => <option key={c} value={c}>{CATALOG_LABEL[c]}</option>)}
+            </select>
+            <p className={hint}>Which catalog customers find it in.</p>
+          </div>
+          <div>
+            <label htmlFor="brand" className={label}>Brand <span className="font-normal text-muted">(optional)</span></label>
+            <input id="brand" name="brand" maxLength={80} list="brands" defaultValue={product?.brand ?? ""} className={input} />
+            <datalist id="brands">
+              {brands.map((b) => <option key={b} value={b} />)}
+            </datalist>
           </div>
         </div>
 

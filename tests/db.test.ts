@@ -348,3 +348,26 @@ describe("out of stock (stock migration)", () => {
     expect(o.created).toBe(true);
   });
 });
+
+describe("catalogs and brands (0006)", () => {
+  it("puts products in Happy by default, allows Vapes, and checks values", async () => {
+    const a = await addProduct("Default catalog", 100);
+    const row = (await db.query<{ catalog: string; brand: string | null }>("select catalog, brand from public.products where id = $1", [a])).rows[0];
+    expect(row).toEqual({ catalog: "happy", brand: null });
+
+    await db.query("update public.products set catalog = 'vapes', brand = 'Mellow Fellow' where id = $1", [a]);
+    const moved = (await db.query<{ catalog: string; brand: string }>("select catalog, brand from public.products where id = $1", [a])).rows[0];
+    expect(moved).toEqual({ catalog: "vapes", brand: "Mellow Fellow" });
+
+    await expect(db.query("update public.products set catalog = 'other' where id = $1", [a])).rejects.toThrow(/products_catalog_check/);
+    await expect(db.query("update public.products set brand = '' where id = $1", [a])).rejects.toThrow(/products_brand_check/);
+
+    // Products in either catalog are priced and ordered the same way.
+    const q = await quote([{ product_id: a, quantity: 2 }]);
+    expect(Number(q.subtotal_cents)).toBe(200);
+  });
+
+  it("can be run again safely", async () => {
+    await db.exec(readFileSync(join(__dirname, "..", "supabase", "migrations", "0006_catalogs_brands.sql"), "utf8"));
+  });
+});

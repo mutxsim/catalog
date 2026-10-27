@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/auth";
 import { formatMoney } from "@/lib/money";
 import { publicStorageUrl } from "@/lib/public-url";
 import { getSettings } from "@/lib/settings";
-import type { Product } from "@/lib/types";
+import { CATALOGS, CATALOG_LABEL, isCatalog, type Product } from "@/lib/types";
 import { btn, input } from "@/components/ui";
 import { moveProduct, toggleInStock, togglePublished } from "./actions";
 import { CsvImport } from "./csv-import";
@@ -21,50 +21,73 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
   const q = typeof sp.q === "string" ? sp.q.trim() : "";
   const saved = typeof sp.saved === "string" ? sp.saved : null;
   const page = Math.max(1, Math.floor(Number(sp.page)) || 1);
+  // Catalog tab: "happy" (default), "vapes", or "all".
+  const tab = sp.catalog === "all" ? "all" : isCatalog(sp.catalog) ? sp.catalog : "happy";
   const offset = (page - 1) * PAGE_SIZE;
   const settings = await getSettings();
 
   let query = supabase
     .from("products")
-    .select("id, name, price_cents, sku, category, image_path, published, in_stock, sort_order", { count: "exact" })
+    .select("id, name, price_cents, sku, category, catalog, brand, image_path, published, in_stock, sort_order", { count: "exact" })
+    .order("catalog")
     .order("sort_order")
     .order("name")
     .order("id")
     .range(offset, offset + PAGE_SIZE - 1);
+  if (tab !== "all") query = query.eq("catalog", tab);
   if (q) {
     const term = q.replace(/[%_,()]/g, " ");
-    query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%`);
+    query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,category.ilike.%${term}%,brand.ilike.%${term}%`);
   }
-  const { data, error, count } = await query;
+  const countIn = (c: string) => supabase.from("products").select("id", { count: "exact", head: true }).eq("catalog", c);
+  const [{ data, error, count }, ...tabCounts] = await Promise.all([query, ...CATALOGS.map(countIn)]);
   const products = (data ?? []) as Product[];
   const total = count ?? products.length;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const { data: flavorRows } = products.length
     ? await supabase.from("product_flavors").select("product_id, in_stock").in("product_id", products.map((p) => p.id))
     : { data: [] };
-  const pageLink = (n: number) => `/admin/products?${new URLSearchParams({ ...(q ? { q } : {}), page: String(n) })}`;
+  const pageLink = (n: number) => `/admin/products?${new URLSearchParams({ ...(tab !== "happy" ? { catalog: tab } : {}), ...(q ? { q } : {}), page: String(n) })}`;
+  const tabLink = (t: string) => `/admin/products${t === "happy" ? "" : `?catalog=${t}`}`;
+  const tabs = [...CATALOGS.map((c, i) => ({ key: c as string, label: CATALOG_LABEL[c], n: tabCounts[i].count ?? 0 })), { key: "all", label: "All", n: null as number | null }];
   const flavorCount = new Map<string, number>();
   const flavorsOut = new Map<string, number>();
   for (const f of flavorRows ?? []) {
     flavorCount.set(f.product_id, (flavorCount.get(f.product_id) ?? 0) + 1);
     if (f.in_stock === false) flavorsOut.set(f.product_id, (flavorsOut.get(f.product_id) ?? 0) + 1);
   }
-  const canReorder = !q;
+  // Arrows move a product within its own catalog, so they're shown per catalog tab.
+  const canReorder = !q && tab !== "all";
 
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Products</h1>
-        <Link href="/admin/products/new" className={btn.primary}>Add product</Link>
+        <Link href={`/admin/products/new${tab === "vapes" ? "?catalog=vapes" : ""}`} className={btn.primary}>Add product</Link>
       </div>
 
       {saved && <p className="mt-4 rounded-lg bg-accent-soft px-3 py-2 text-sm text-accent">Saved “{saved}”.</p>}
       {error && <p className="mt-4 text-sm text-danger">Could not load products.</p>}
 
-      <form className="mt-5 flex gap-2" role="search">
-        <input name="q" defaultValue={q} placeholder="Search name, SKU or category" className={`${input} max-w-sm`} />
+      <nav aria-label="Catalogs" className="mt-5 flex flex-wrap gap-2">
+        {tabs.map((t) => (
+          <Link
+            key={t.key}
+            href={tabLink(t.key)}
+            aria-current={tab === t.key ? "page" : undefined}
+            className={`inline-flex h-9 items-center gap-1.5 rounded-full border px-4 text-sm font-medium ${tab === t.key ? "border-accent bg-accent-soft text-accent" : "border-line bg-card text-muted hover:text-ink"}`}
+          >
+            {t.label}
+            {t.n !== null && <span className="tabular text-xs opacity-70">{t.n}</span>}
+          </Link>
+        ))}
+      </nav>
+
+      <form className="mt-4 flex gap-2" role="search">
+        {tab !== "happy" && <input type="hidden" name="catalog" value={tab} />}
+        <input name="q" defaultValue={q} placeholder="Search name, SKU, brand or category" className={`${input} max-w-sm`} />
         <button className={btn.secondary}>Search</button>
-        {q && <Link href="/admin/products" className={btn.ghost}>Clear</Link>}
+        {q && <Link href={tabLink(tab)} className={btn.ghost}>Clear</Link>}
       </form>
 
       <div className="mt-5 overflow-x-auto rounded-xl border border-line bg-card">
@@ -74,6 +97,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
               <th className="w-16 px-4 py-3 font-medium">Order</th>
               <th className="px-2 py-3 font-medium">Product</th>
               <th className="px-2 py-3 font-medium">SKU</th>
+              <th className="px-2 py-3 font-medium">Brand</th>
               <th className="px-2 py-3 font-medium">Category</th>
               <th className="px-2 py-3 text-right font-medium">Price</th>
               <th className="px-2 py-3 font-medium">Status</th>
@@ -118,7 +142,11 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
                     </div>
                   </td>
                   <td className="px-2 py-2 text-muted">{p.sku ?? "—"}</td>
-                  <td className="px-2 py-2 text-muted">{p.category ?? "—"}</td>
+                  <td className="px-2 py-2 text-muted">{p.brand ?? "—"}</td>
+                  <td className="px-2 py-2 text-muted">
+                    {p.category ?? "—"}
+                    {tab === "all" && <span className="block text-xs">{CATALOG_LABEL[p.catalog] ?? p.catalog}</span>}
+                  </td>
                   <td className="tabular px-2 py-2 text-right">{formatMoney(p.price_cents, settings.currency)}</td>
                   <td className="px-2 py-2">
                     <form action={togglePublished}>
@@ -150,8 +178,8 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
             })}
             {products.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-muted">
-                  {q ? "No products match your search." : "No products yet. Add your first product to start your catalog."}
+                <td colSpan={8} className="px-4 py-12 text-center text-muted">
+                  {q ? "No products match your search." : tab === "all" ? "No products yet. Add your first product to start your catalog." : `No products in ${CATALOG_LABEL[tab]} yet.`}
                 </td>
               </tr>
             )}
@@ -173,8 +201,8 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">Import / export CSV</summary>
         <div className="border-t border-line px-4 py-4 text-sm">
           <p className="text-muted">
-            Columns: <code className="font-mono text-xs">name, price, sku, category, flavors, description, published, sort_order, image_url, in_stock</code>. List flavors separated by semicolons (e.g. <code className="font-mono text-xs">Mint; Grape; Mango</code>); a filled flavors cell replaces that product&apos;s flavor list. Rows with a
-            SKU that already exists update that product; other rows are added. An <code className="font-mono text-xs">image_url</code> link is downloaded and becomes the product photo (large imports may need running twice to finish all images; links already imported are skipped). <code className="font-mono text-xs">in_stock</code> (true/false) sets stock when filled in; leave it empty to keep the current stock.
+            Columns: <code className="font-mono text-xs">id, catalog, brand, name, price, sku, category, flavors, description, published, sort_order, image_url, in_stock</code>. <code className="font-mono text-xs">catalog</code> is <code className="font-mono text-xs">happy</code> or <code className="font-mono text-xs">vapes</code> (empty keeps the current catalog; new products go to Happy). List flavors separated by semicolons (e.g. <code className="font-mono text-xs">Mint; Grape; Mango</code>); a filled flavors cell replaces that product&apos;s flavor list. Rows whose
+            <code className="font-mono text-xs">id</code> (from an export) or SKU matches an existing product update it; other rows are added. An <code className="font-mono text-xs">image_url</code> link is downloaded and becomes the product photo (large imports may need running twice to finish all images; links already imported are skipped). <code className="font-mono text-xs">in_stock</code> (true/false) sets stock when filled in; leave it empty to keep the current stock.
           </p>
           <div className="mt-4 flex flex-wrap items-start gap-3">
             <a href="/admin/products/export" download className={btn.secondary}>Export CSV</a>

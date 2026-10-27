@@ -143,6 +143,12 @@ async function seed() {
   await sql(
     "insert into public.product_flavors (product_id, name, sort_order) select p.id, f.name, f.ord from public.products p cross join (values ('Mint', 1), ('Mango', 2)) as f(name, ord) where p.sku in ('BULK-1', 'BULK-700', 'BULK-1350')",
   );
+  // Brands on a few Happy products, and one product in the Vapes catalog.
+  await sql("update public.products set brand = 'Crisp Co' where sku in ('KC-24', 'MN-12')");
+  await sql("update public.products set brand = 'Clear Springs' where sku in ('SW-24', 'SP-12')");
+  await sql(
+    "insert into public.products (name, price_cents, sku, category, brand, catalog, published, sort_order) values ('Cloud Disposable 2g', 1999, 'CL-2G', 'Disposables', 'Cloudline', 'vapes', true, 10)",
+  );
 
   // The main shopper's account (created by the admin UI later in the test for a second account).
   await sql("select public.create_customer('Main Street Market', $1, 'PW4C')", [codeHash(MAIN_CODE)]);
@@ -191,39 +197,66 @@ async function main() {
   await page.waitForURL((u) => u.pathname === "/");
   step("catalog, product, cart, checkout and APIs require a valid access code; code-only login works");
 
-  // ---- Catalog
+  // ---- Choose a catalog
   await page.goto(APP);
+  assert.equal(await page.getByText(/^catalog$/i).count(), 1, "the word CATALOG appears exactly once");
+  await page.getByRole("link", { name: /Vapes/ }).first().waitFor();
+  await page.screenshot({ path: join(shots, "00b-choose-catalog-mobile.png"), fullPage: true });
+  await page.locator("main").getByRole("link", { name: /Shop Vapes/ }).click();
+  await page.waitForURL(/\/shop\/vapes$/);
+  await page.getByRole("heading", { name: "Cloud Disposable 2g" }).waitFor();
+  assert.equal(await page.getByRole("heading", { name: /Spring Water/ }).count(), 0, "Happy products stay out of Vapes");
+  await page.getByText(/^1 product$/).waitFor();
+  await page.goto(`${APP}/?q=cola`);
+  await page.waitForURL(/\/shop\/happy\?q=cola/);
+  await page.goto(APP);
+  await page.locator("main").getByRole("link", { name: /Shop Happy/ }).click();
+  await page.waitForURL(/\/shop\/happy$/);
+  step("after login customers choose Vapes or Happy; each shows only its own products; old links go to Happy");
+
+  // ---- Catalog
   await page.getByRole("heading", { name: "Spring Water 24 × 16.9 oz" }).waitFor();
   assert.equal(await page.getByText("Hidden Draft Product").count(), 0, "unpublished products must not show");
-  assert.equal(await page.getByText(/^catalog$/i).count(), 1, "the word CATALOG appears exactly once");
+  assert.equal(await page.getByRole("heading", { name: "Cloud Disposable 2g" }).count(), 0, "Vapes products stay out of Happy");
   await page.getByText(/1359 products · page 1 of 29/).waitFor();
   assert.equal(await page.locator("article").count(), 48, "one page of products at a time");
   await page.screenshot({ path: join(shots, "01-catalog-mobile.png"), fullPage: true });
   await page.getByRole("link", { name: "Next →" }).click();
   await page.waitForURL(/page=2/);
   await page.getByText(/page 2 of 29/).waitFor();
-  await page.goto(`${APP}/?page=29`);
+  await page.goto(`${APP}/shop/happy?page=29`);
   await page.getByRole("heading", { name: "Bulk Item 1350" }).waitFor();
   await page.locator("article", { has: page.getByRole("heading", { name: "Bulk Item 1350" }) }).getByLabel("Flavor").waitFor();
-  await page.goto(`${APP}/?q=bulk%20item%2007`);
+  await page.goto(`${APP}/shop/happy?q=bulk%20item%2007`);
   await page.getByText(/^\d+ results for/).waitFor();
   step("catalog lists only published products; 1,359 products load in pages of 48 (flavors included)");
 
-  await page.goto(APP);
-  await page.getByRole("combobox", { name: "Categories" }).selectOption("Snacks");
+  await page.goto(`${APP}/shop/happy`);
+  const itemRow = page.getByRole("group", { name: "Items" });
+  const brandRow = page.getByRole("group", { name: "Brands" });
+  assert.equal(await brandRow.getByRole("button", { name: "Cloudline" }).count(), 0, "Vapes brands don't show in Happy");
+  await page.screenshot({ path: join(shots, "01a-filters-mobile.png") });
+  await itemRow.getByRole("button", { name: "Snacks" }).click();
   await page.waitForURL(/c=Snacks/);
   await page.getByRole("heading", { name: /Kettle Chips/ }).waitFor();
   assert.equal(await page.getByRole("heading", { name: /Spring Water/ }).count(), 0);
-  await page.getByRole("combobox", { name: "Categories" }).selectOption("");
+  await itemRow.getByRole("button", { name: "All" }).click();
   await page.waitForURL((u) => !u.search);
+  await brandRow.getByRole("button", { name: "Clear Springs" }).click();
+  await page.waitForURL(/b=Clear\+Springs/);
+  await page.getByText(/^2 products · Clear Springs$/).waitFor();
+  await itemRow.getByRole("button", { name: "Snacks" }).click();
+  await page.waitForURL(/b=Clear\+Springs&c=Snacks/);
+  await page.getByText("No products match.").waitFor();
+  await page.goto(`${APP}/shop/happy`);
   await page.getByRole("searchbox", { name: "Search products" }).fill("cola");
   await page.waitForURL(/q=cola/);
   await page.getByRole("heading", { name: /Cola 24/ }).waitFor();
   assert.equal(await page.getByRole("heading", { name: /Spring Water/ }).count(), 0);
-  step("category filter and search");
+  step("brand and item (category) filters and search");
 
   // ---- Add to cart (grid quantity + detail page)
-  await page.goto(APP);
+  await page.goto(`${APP}/shop/happy`);
   const card = page.locator("article", { has: page.getByRole("heading", { name: "Spring Water 24 × 16.9 oz" }) });
   await card.getByRole("button", { name: /Increase quantity/ }).click();
   await card.getByRole("button", { name: /Increase quantity/ }).click();
@@ -231,6 +264,7 @@ async function main() {
   await page.getByRole("link", { name: /Cart, 3 items/ }).waitFor();
   await page.getByRole("heading", { name: /Kettle Chips/ }).click();
   await page.waitForURL(/\/p\//);
+  await page.getByRole("link", { name: "← Back to Happy" }).waitFor();
   await page.getByRole("spinbutton").fill("5");
   await page.getByRole("spinbutton").blur();
   await page.getByRole("button", { name: "Add to Cart" }).click();
@@ -378,8 +412,9 @@ async function main() {
   const exported = await admin.request.get(`${APP}/admin/products/export`);
   assert.equal(exported.status(), 200);
   const exportText = await exported.text();
-  assert.equal(exportText.trim().split("\r\n").length - 1, 1360, "export includes every product, past 1,000 rows");
-  assert.match(exportText, /Bulk Item 0700,17\.00,BULK-700,THCA,Mint; Mango/);
+  assert.equal(exportText.trim().split("\r\n").length - 1, 1361, "export includes every product in both catalogs, past 1,000 rows");
+  assert.match(exportText, /,happy,,Bulk Item 0700,17\.00,BULK-700,THCA,Mint; Mango/);
+  assert.match(exportText, /,vapes,Cloudline,Cloud Disposable 2g,19\.99,CL-2G,Disposables,/);
   await admin.getByRole("link", { name: "Add product" }).click();
   await admin.getByLabel("Product name").fill("Energy Drink 24 × 8.4 oz");
   await admin.getByLabel(/Selling price/).fill("32.50");
@@ -401,6 +436,31 @@ async function main() {
   await admin.getByText(/Unsupported image/).waitFor();
   step("product created with image; disguised non-image upload rejected");
 
+  // ---- Catalogs and brands in admin: tabs, form fields, CSV import by id
+  await admin.goto(`${APP}/admin/products?catalog=vapes`);
+  await admin.getByRole("link", { name: "Cloud Disposable 2g" }).or(admin.getByText("Cloud Disposable 2g")).first().waitFor();
+  assert.equal(await admin.getByText("Energy Drink 24 × 8.4 oz").count(), 0, "Vapes tab lists only Vapes products");
+  await admin.screenshot({ path: join(shots, "08b-admin-products-vapes.png"), fullPage: true });
+  await admin.goto(`${APP}/admin/products/${created.id}`);
+  await admin.getByLabel("Catalog", { exact: true }).selectOption("vapes");
+  await admin.getByLabel(/Brand/).fill("Volt");
+  await admin.getByRole("button", { name: "Save changes" }).click();
+  await admin.waitForURL(/\/admin\/products\?saved=/);
+  let [moved] = await sql("select catalog, brand from public.products where id = $1", [created.id]);
+  assert.deepEqual({ ...moved }, { catalog: "vapes", brand: "Volt" });
+  // Re-importing an export row by id updates that product (even with a new SKU) instead of adding one.
+  const csvIn = `id,catalog,brand,name,price,sku,category,description,published\r\n${created.id},happy,Volt Labs,Energy Drink 24 × 8.4 oz,32.50,EN-24B,Beverages,,true\r\n,vapes,Cloudline,Cloud Pod 1g,9.99,CL-1G,Pods,,true\r\n`;
+  await admin.goto(`${APP}/admin/products`);
+  await admin.getByText("Import / export CSV").click();
+  await admin.locator('input[name="file"]').setInputFiles({ name: "products.csv", mimeType: "text/csv", buffer: Buffer.from(csvIn) });
+  await admin.getByRole("button", { name: "Import CSV" }).click();
+  await admin.getByText("Imported: 1 added, 1 updated.").waitFor();
+  [moved] = await sql("select catalog, brand, sku from public.products where id = $1", [created.id]);
+  assert.deepEqual({ ...moved }, { catalog: "happy", brand: "Volt Labs", sku: "EN-24B" });
+  const [pod] = await sql("select catalog, brand, category from public.products where sku = 'CL-1G'");
+  assert.deepEqual({ ...pod }, { catalog: "vapes", brand: "Cloudline", category: "Pods" });
+  step("admin: catalog tabs, catalog + brand on the product form, CSV import matches by id and sets catalog/brand");
+
   // ---- Product edits never change existing invoices / orders
   await sql("update public.products set price_cents = 1, name = 'Changed' where sku = 'KC-24'");
   const again = new Uint8Array(await (await fetch(`${APP}/api/invoice/${orderId}?t=${token}`)).arrayBuffer());
@@ -420,11 +480,21 @@ async function main() {
   // ---- Desktop catalog screenshot
   const desk = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   await loginAs(desk, MAIN_CODE);
-  await desk.goto(`${APP}/?q=Energy%20Drink`);
+  await desk.screenshot({ path: join(shots, "11a-choose-catalog-desktop.png") });
+  await desk.goto(`${APP}/shop/happy`);
+  await desk.screenshot({ path: join(shots, "11b-happy-desktop.png") });
+  await desk.goto(`${APP}/shop/happy?q=Energy%20Drink`);
   await desk.getByRole("heading", { name: /Energy Drink/ }).waitFor();
   await desk.screenshot({ path: join(shots, "11-catalog-desktop.png"), fullPage: true });
   await desk.goto(`${APP}/p/${created.id}`);
   await desk.screenshot({ path: join(shots, "12-product-desktop.png") });
+  // Header search on other pages searches every catalog.
+  await desk.getByRole("searchbox", { name: "Search all products" }).fill("cloud");
+  await desk.getByRole("searchbox", { name: "Search all products" }).press("Enter");
+  await desk.waitForURL(/\/search\?q=cloud/);
+  await desk.getByRole("heading", { name: "Cloud Disposable 2g" }).waitFor();
+  await desk.getByRole("heading", { name: "Cloud Pod 1g" }).waitFor();
+  step("header search finds products in every catalog");
 
   // ---- Admin: manage flavors on a product (add, rename, remove, reorder-free save)
   const [{ id: shotId }] = await sql("select id from public.products where sku = 'ES-12'");
@@ -475,6 +545,7 @@ async function main() {
   shopper.on("pageerror", (e) => failures.push(`flavor page error: ${e.message}`));
   await loginAs(shopper, flavorCode);
   await shopper.getByText("Flavor Test Shop").first().waitFor({ state: "attached" });
+  await shopper.goto(`${APP}/shop/happy`);
   const shotCard = shopper.locator("article", { has: shopper.getByRole("heading", { name: "Energy Shot 2 oz, 12 ct" }) });
   const flavorSelect = shotCard.getByLabel("Flavor");
   const addBtn = shotCard.getByRole("button", { name: "Add to Cart" });

@@ -14,6 +14,13 @@ export type Settings = {
   login_retention_days?: number;
 };
 
+export const CATALOGS = ["happy", "vapes"] as const;
+export type Catalog = (typeof CATALOGS)[number];
+export const CATALOG_LABEL: Record<Catalog, string> = { happy: "Happy", vapes: "Vapes" };
+export function isCatalog(v: unknown): v is Catalog {
+  return typeof v === "string" && (CATALOGS as readonly string[]).includes(v);
+}
+
 export type Product = {
   id: string;
   name: string;
@@ -21,6 +28,9 @@ export type Product = {
   sku: string | null;
   description: string | null;
   category: string | null;
+  /** Which catalog the product is in (0006). Defaults to "happy". */
+  catalog: Catalog;
+  brand: string | null;
   image_path: string | null;
   published: boolean;
   in_stock: boolean;
