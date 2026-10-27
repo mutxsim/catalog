@@ -14,7 +14,7 @@ No branding is built in: business name, logo, address, currency, tax and invoice
 At [supabase.com](https://supabase.com) create a project (the free tier is fine).
 
 ### 2. Create the database
-In the Supabase dashboard open **SQL Editor**, paste the whole of `supabase/migrations/0001_init.sql`, and run it. Then do the same with `supabase/migrations/0002_flavors.sql`, `supabase/migrations/0003_flavors_customers_activity.sql`, `supabase/migrations/0004_image_source_url.sql` and `supabase/migrations/0005_stock.sql`, in that order. They only add things; existing products, orders and invoices are untouched. This creates the tables, pricing/order functions, row-level security and the three storage buckets (`product-images`, `branding` public; `invoices` private).
+In the Supabase dashboard open **SQL Editor**, paste the whole of `supabase/migrations/0001_init.sql`, and run it. Then do the same with `supabase/migrations/0002_flavors.sql`, `supabase/migrations/0003_flavors_customers_activity.sql`, `supabase/migrations/0004_image_source_url.sql`, `supabase/migrations/0005_stock.sql` and `supabase/migrations/0006_catalogs_brands.sql`, in that order. They only add things; existing products, orders and invoices are untouched. This creates the tables, pricing/order functions, row-level security and the three storage buckets (`product-images`, `branding` public; `invoices` private).
 
 Then in **Authentication → Sign In / Providers**, turn **off** "Allow new users to sign up". Only the admin account you create below should exist.
 
@@ -44,7 +44,7 @@ Deploy to Vercel (or any Node host): import the repo, add the same environment v
 
 | Customer | You |
 |---|---|
-| Browses `/` — search, category filters, product detail pages | Manage products, order and visibility at `/admin/products` |
+| Picks **Vapes** or **Happy** at `/`, then browses `/shop/vapes` or `/shop/happy` — brand and item filters, search, product detail pages | Manage products, order and visibility at `/admin/products` |
 | Cart is saved in the browser; totals are re-priced by the server | New orders arrive on WhatsApp with the PDF attached |
 | Checkout asks only for the store/business name → **Place Order** | `/admin/orders`: open, change status, download or print invoices, retry WhatsApp |
 | Confirmation page with order number, total and **Download Invoice** | Statuses: New → Preparing → Ready for Pickup → Completed / Cancelled |
@@ -112,6 +112,13 @@ Recorded per attempt (server-side only): time (UTC, shown in `STORE_TIMEZONE`), 
 
 **Retention:** login records are kept for `Settings → Keep login records for (days)` (default 365) and removed only when you press **Login Activity → Retention → Remove old login records**.
 
+## Catalogs (Vapes and Happy) and brands
+After entering their access code, customers see two choices, **Vapes** and **Happy**; each opens its own catalog (`/shop/vapes`, `/shop/happy`). The header has Vapes / Happy links to switch, and its search box (on pages without their own search) looks through both catalogs at `/search`. Old links like `/?q=…` open Happy.
+
+Each catalog has two filter rows at the top, built from the published products in that catalog: **Brands** (each product's *Brand*) and **Items** (each product's *Category* — Gummies, Cartridges, Disposables, Pre-Rolls, …). Long brand lists show the first few with a "+ N more" button.
+
+Every product has a **Catalog** (Happy or Vapes) and an optional **Brand** on its edit page. Migration `0006` puts every existing product in Happy with no brand. In Admin → Products, the **Happy / Vapes / All** tabs filter the list; the ↑ ↓ arrows reorder products within their own catalog.
+
 ## Out of stock
 Mark a whole product out of stock with the **In stock / Out of stock** button in the Products list (or the **In stock** checkbox on the product's page). Mark a single flavor out of stock with its **In stock** button in the product's flavor list, then save.
 
@@ -124,7 +131,7 @@ The product CSV has an optional `image_url` column. On import, each link is down
 Each invoice line shows a small thumbnail of the product (or the selected flavor's own photo) next to the name and flavor — in the PDF (download and print) and on the order confirmation page. The image used is recorded on the order line at checkout, and images referenced by past orders are never deleted from storage, so old invoices keep their pictures. Missing or unreadable images show a neutral placeholder; images are shrunk server-side (sharp) before being embedded. The PDF is generated once at checkout and stored, so reopening it later always gives the same file.
 
 ## Product CSV
-Admin → Products → *Import / export CSV*. Columns: `name, price, sku, category, flavors, description, published, sort_order`. `flavors` lists names separated by semicolons (`Mint; Grape; Mango`); a filled cell replaces that product's flavor list, an empty cell leaves it unchanged. (only `name` and `price` are required). Rows whose SKU matches an existing product update it; others are added. Images are set per product.
+Admin → Products → *Import / export CSV*. Columns: `id, catalog, brand, name, price, sku, category, flavors, description, published, sort_order, image_url, in_stock` (only `name` and `price` are required). `flavors` lists names separated by semicolons (`Mint; Grape; Mango`); a filled cell replaces that product's flavor list, an empty cell leaves it unchanged. `catalog` is `happy` or `vapes`; empty keeps the product's current catalog (new products go to Happy). Leaving the `brand` column out keeps brands; an empty `brand` cell clears it. Rows whose `id` (as exported) or SKU matches an existing product update it; others are added. Leave out a column you don't want changed only for `flavors`, `image_url`, `in_stock`, `catalog`, `brand` and `sort_order` — a missing `category` or `description` column clears those fields, and a missing `published` column publishes the row.
 
 ## Testing
 ```bash
@@ -138,7 +145,8 @@ The end-to-end test needs Chromium: run `npx playwright install chromium` once, 
 ## Project layout
 ```
 supabase/migrations/0001_init.sql   schema, pricing & order functions, RLS, buckets
-src/app/(store)/                    catalog, product, cart, checkout, confirmation
+supabase/migrations/0006_*.sql      Vapes/Happy catalogs and brands
+src/app/(store)/                    catalog chooser, /shop/[catalog], search, product, cart, checkout, confirmation
 src/app/admin/                      login + orders, products, settings
 src/app/api/                        quote, orders, invoice download, WhatsApp webhook
 src/lib/invoice/                    PDF rendering and storage

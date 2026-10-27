@@ -11,6 +11,14 @@ export async function getCategories() {
   return [...new Set(data.map((r) => r.category))].sort((a, b) => a.localeCompare(b));
 }
 
+export async function getBrands() {
+  const { supabase } = await requireAdmin();
+  const data = await fetchAll<{ brand: string }>((from, to) =>
+    supabase.from("products").select("brand").not("brand", "is", null).order("id").range(from, to),
+  );
+  return [...new Set(data.map((r) => r.brand))].sort((a, b) => a.localeCompare(b));
+}
+
 export async function getFlavorRows(productId: string) {
   const { supabase } = await requireAdmin();
   const { data } = await supabase.from("product_flavors").select("id, name, image_path, in_stock").eq("product_id", productId).order("sort_order").order("name");

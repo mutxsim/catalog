@@ -6,7 +6,7 @@ import { createPublicClient } from "@/lib/supabase/server";
 import { getSettings } from "@/lib/settings";
 import { requireCustomer } from "@/lib/customer-auth";
 import { PRODUCT_COLUMNS, withFlavors } from "@/lib/catalog";
-import type { Product } from "@/lib/types";
+import { CATALOG_LABEL, type Product } from "@/lib/types";
 import { ProductPanel } from "@/components/store/product-panel";
 
 const getProduct = cache(async (id: string) => {
@@ -31,7 +31,7 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
 
   return (
     <main className="mx-auto max-w-5xl px-4 pb-10 pt-4 sm:px-6 sm:pt-8">
-      <Link href="/" className="inline-flex h-9 items-center text-sm text-muted hover:text-ink">← Back to catalog</Link>
+      <Link href={`/shop/${product.catalog}`} className="inline-flex h-9 items-center text-sm text-muted hover:text-ink">← Back to {CATALOG_LABEL[product.catalog] ?? "catalog"}</Link>
       <div className="mt-3">
         <ProductPanel layout="detail" product={product} currency={settings.currency} initialFlavorId={typeof f === "string" ? f : undefined} priority />
       </div>

@@ -48,7 +48,7 @@ export function toCsv(header: string[], rows: (string | number | boolean | null 
   return [header, ...rows].map((r) => r.map(escapeField).join(",")).join("\r\n") + "\r\n";
 }
 
-export const PRODUCT_CSV_HEADER = ["name", "price", "sku", "category", "flavors", "description", "published", "sort_order", "image_url", "in_stock"] as const;
+export const PRODUCT_CSV_HEADER = ["id", "catalog", "brand", "name", "price", "sku", "category", "flavors", "description", "published", "sort_order", "image_url", "in_stock"] as const;
 
 export function parseBool(v: string | undefined, fallback: boolean): boolean {
   if (v === undefined || v.trim() === "") return fallback;
